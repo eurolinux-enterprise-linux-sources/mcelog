@@ -1,0 +1,104 @@
+diff -urNp -x '*.o' mcelog-1.0pre3_20110718.orig/intel.c mcelog-1.0pre3_20110718/intel.c
+--- mcelog-1.0pre3_20110718.orig/intel.c	2012-02-16 11:04:42.022811248 -0500
++++ mcelog-1.0pre3_20110718/intel.c	2012-02-20 09:05:43.403748548 -0500
+@@ -59,14 +59,18 @@ enum cputype select_intel_cputype(int fa
+ 		else if (model == 0x2d)
+ 			return CPU_SANDY_BRIDGE_EP;
+ 		if (model > 0x1a) {
++#if 0
+ 			Eprintf("Family 6 Model %x CPU: only decoding architectural errors\n",
+ 				model);
++#endif
+ 			return CPU_INTEL; 
+ 		}
+ 	}
+ 	if (family > 6) { 
++#if 0
+ 		Eprintf("Family %u Model %x CPU: only decoding architectural errors\n",
+ 				family, model);
++#endif
+ 		return CPU_INTEL;
+ 	}
+ 	Eprintf("Unknown Intel CPU type family %x model %x\n", family, model);
+Binary files mcelog-1.0pre3_20110718.orig/mcelog and mcelog-1.0pre3_20110718/mcelog differ
+diff -urNp -x '*.o' mcelog-1.0pre3_20110718.orig/mcelog.c mcelog-1.0pre3_20110718/mcelog.c
+--- mcelog-1.0pre3_20110718.orig/mcelog.c	2012-02-16 11:04:42.024811247 -0500
++++ mcelog-1.0pre3_20110718/mcelog.c	2012-02-20 09:05:01.479083969 -0500
+@@ -467,7 +467,7 @@ int is_cpu_supported(void)
+ 				if (family == 15)
+ 					cputype = CPU_K8;
+ 				if (family >= 15)
+-					SYSERRprintf("AMD Processor family %d: Please load edac_mce_amd module.\n", family);
++					fprintf(stderr, "AMD Processor family %d: Please load edac_mce_amd module.\n", family);
+ 				return 0;
+ 			} else if (!strcmp(vendor,"GenuineIntel"))
+ 				cputype = select_intel_cputype(family, model);
+@@ -832,6 +832,7 @@ enum options { 
+ 	O_NUMERRORS,
+ 	O_PIDFILE,
+ 	O_DEBUG_NUMERRORS,
++	O_SUPPORTED,
+ };
+ 
+ static struct option options[] = {
+@@ -864,6 +865,7 @@ static struct option options[] = {
+ 	{ "num-errors", 1, NULL, O_NUMERRORS },
+ 	{ "pidfile", 1, NULL, O_PIDFILE },
+ 	{ "debug-numerrors", 0, NULL, O_DEBUG_NUMERRORS }, /* undocumented: for testing */
++	{ "supported", 0, NULL, O_SUPPORTED },
+ 	DISKDB_OPTIONS
+ 	{}
+ };
+@@ -1159,6 +1161,7 @@ int main(int ac, char **av) 
+ 	struct mcefd_data d = {};
+ 	int opt;
+ 	int fd;
++	int ret;
+ 
+ 	parse_config(av);
+ 
+@@ -1177,6 +1180,9 @@ int main(int ac, char **av) 
+ 			noargs(ac, av);
+ 			fprintf(stderr, "mcelog %s\n", MCELOG_VERSION);
+ 			exit(0);
++		} else if (opt == O_SUPPORTED) {
++			noargs(ac, av);
++			exit(!is_cpu_supported());
+ 		} else if (diskdb_cmd(opt, ac, av)) {
+ 			exit(0);
+ 		} else if (opt == 0)
+diff -urNp -x '*.o' mcelog-1.0pre3_20110718.orig/mcelog.cron mcelog-1.0pre3_20110718/mcelog.cron
+--- mcelog-1.0pre3_20110718.orig/mcelog.cron	2012-02-16 11:04:42.019811294 -0500
++++ mcelog-1.0pre3_20110718/mcelog.cron	2012-02-20 08:20:44.480757074 -0500
+@@ -1,2 +1,9 @@
+ #!/bin/bash
++
++# is mcelog supported?
++/usr/sbin/mcelog --supported >& /dev/null
++if [ $? -eq 1 ]; then
++       exit 1;
++fi
++
+ /usr/sbin/mcelog --ignorenodev --filter >> /var/log/mcelog
+diff -urNp -x '*.o' mcelog-1.0pre3_20110718.orig/mcelog.8 mcelog-1.0pre3_20110718/mcelog.8
+--- mcelog-1.0pre3_20110718.orig/mcelog.8	2012-02-20 08:55:40.821054672 -0500
++++ mcelog-1.0pre3_20110718/mcelog.8	2012-02-21 11:42:27.955086868 -0500
+@@ -18,6 +18,8 @@ mcelog [options] \-\-ascii
+ .\"mcelog [options] \-\-dump-memory[=locator]
+ .br
+ mcelog \-\-version
++.br
++mcelog \-\-supported
+ .SH DESCRIPTION
+ X86 CPUs report errors detected by the CPU as
+ .I machine check events (MCEs). 
+@@ -246,6 +248,9 @@ Only valid in daemon mode.
+ .B \-\-version
+ displays the version of mcelog and exits.
+ 
++.B \-\-supported
++returns 0 if the system has processors which support MCE, and 1 otherwise.
++
+ .SH CONFIG FILE
+ mcelog supports a config file to set defaults. Command line options override
+ the config file. By default the config file is read from

@@ -1,0 +1,26 @@
+diff -urNp mcelog-1.0pre3_20101112.orig/mcelog.conf mcelog-1.0pre3_20101112/mcelog.conf
+--- mcelog-1.0pre3_20101112.orig/mcelog.conf	2011-03-07 08:20:50.057970681 -0500
++++ mcelog-1.0pre3_20101112/mcelog.conf	2011-03-07 08:23:02.374276799 -0500
+@@ -122,17 +122,17 @@ socket-tracing-enabled = yes
+ # mem-uc-error-trigger = socket-memory-error-trigger
+ mem-uc-error-threshold = 100 / 24h
+ # Threshold and trigger for corrected memory errors on a socket
+-mem-ce-error-trigger = socket-memory-error-trigger
+-mem-ce-error-threshold = 100 / 24h
++#mem-ce-error-trigger = socket-memory-error-trigger
++#mem-ce-error-threshold = 100 / 24h
+ #  Log socket error threshold explicitely?
+-mem-ce-error-log = yes
++#mem-ce-error-log = yes
+ 
+ 
+ [cache]
+ # Processing of cache error thresholds reported by Intel CPUs
+-cache-threshold-trigger = cache-error-trigger
++#cache-threshold-trigger = cache-error-trigger
+ # Should cache threshold events be logged explicitely?
+-cache-threshold-log = yes
++#cache-threshold-log = yes
+ 
+ [page]
+ # Memory error accouting per 4K memory page
