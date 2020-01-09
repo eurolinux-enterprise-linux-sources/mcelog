@@ -1,6 +1,7 @@
 CFLAGS := -g -Os
 prefix := /usr
 etcprefix :=
+MANDIR := ${prefix}/share/man
 # Define appropiately for your distribution
 # DOCDIR := /usr/share/doc/packages/mcelog
 
@@ -29,15 +30,17 @@ TRIGGERS=cache-error-trigger dimm-error-trigger page-error-trigger \
 
 all: mcelog
 
-.PHONY: install clean depend
+.PHONY: install clean depend FORCE
 
 OBJ := p4.o k8.o mcelog.o dmi.o tsc.o core2.o bitfield.o intel.o \
        nehalem.o dunnington.o tulsa.o config.o memutil.o msg.o   \
        eventloop.o leaky-bucket.o memdb.o server.o trigger.o 	 \
        client.o cache.o sysfs.o yellow.o page.o rbtree.o 	 \
-       xeon75xx.o sandy-bridge.o ivy-bridge.o haswell.o msr.o bus.o unknown.o
+       xeon75xx.o sandy-bridge.o ivy-bridge.o haswell.o msr.o bus.o \
+       unknown.o
 DISKDB_OBJ := diskdb.o dimm.o db.o
-CLEAN := mcelog dmi tsc dbquery .depend .depend.X dbquery.o ${DISKDB_OBJ}
+CLEAN := mcelog dmi tsc dbquery .depend .depend.X dbquery.o ${DISKDB_OBJ} \
+	version.o version.c version.tmp
 DOC := mce.pdf
 
 ADD_DEFINES :=
@@ -51,29 +54,35 @@ endif
 
 SRC := $(OBJ:.o=.c)
 
-mcelog: ${OBJ}
+mcelog: ${OBJ} version.o
 
 # dbquery intentionally not installed by default
-install: mcelog
-	mkdir -p $(DESTDIR)${etcprefix}/etc/mcelog $(DESTDIR)${prefix}/sbin $(DESTDIR)${prefix}/share/man/man8
+install: mcelog mcelog.conf mcelog.conf.5 mcelog.triggers.5
+	mkdir -p $(DESTDIR)${etcprefix}/etc/mcelog $(DESTDIR)${prefix}/sbin $(DESTDIR)$(MANDIR)/man5 $(DESTDIR)$(MANDIR)/man8
 	install -m 755 -p mcelog $(DESTDIR)${prefix}/sbin/mcelog
-	install -m 644 -p mcelog.8 $(DESTDIR)${prefix}/share/man/man8
+	install -m 644 -p mcelog.8 $(DESTDIR)$(MANDIR)/man8
+	install -m 644 -p mcelog.conf.5 $(DESTDIR)$(MANDIR)/man5
+	install -m 644 -p mcelog.triggers.5 $(DESTDIR)$(MANDIR)/man5
 	install -m 644 -p -b mcelog.conf $(DESTDIR)${etcprefix}/etc/mcelog/mcelog.conf
 	for i in ${TRIGGERS} ; do 						\
 		install -m 755 -p -b triggers/$$i $(DESTDIR)${etcprefix}/etc/mcelog ; 	\
 	done
 ifdef DOCDIR
+	install -d 755 $(DESTDIR)${DOCDIR} 
 	install -m 644 -p ${DOC} $(DESTDIR)${DOCDIR} 
 else
 	echo
 	echo "Consider defining DOCDIR to install additional documentation"
 endif
 
+mcelog.conf.5: mcelog.conf config-intro.man
+	./genconfig.py mcelog.conf config-intro.man > mcelog.conf.5
+
 clean: test-clean
 	rm -f ${CLEAN} ${OBJ} 
 
 tsc:    tsc.c
-	gcc -o tsc ${CFLAGS} -DSTANDALONE tsc.c ${LDFLAGS}
+	$(CC) -o tsc ${CFLAGS} -DSTANDALONE tsc.c ${LDFLAGS}
 
 dbquery: db.o dbquery.o memutil.o
 
@@ -81,6 +90,21 @@ depend: .depend
 
 %.o: %.c
 	$(CC) -c $(CFLAGS) $(CPPFLAGS) $(WARNINGS) $(ADD_DEFINES) -o $@ $<
+
+version.tmp: FORCE
+	( echo -n "char version[] = \"" ; 	\
+	if type -p git >/dev/null; then 	\
+	if [ -d .git ] ; then 			\
+		git describe --tags HEAD | tr -d '\n'; 	\
+	else 					\
+		echo -n "unknown" ; 		\
+	fi ;					\
+	else echo -n "unknown" ; fi ;		\
+	echo '";'				\
+	 ) > version.tmp
+
+version.c: version.tmp
+	cmp version.tmp version.c || mv version.tmp version.c
 
 .depend: ${SRC}
 	${CC} -MM -I. ${SRC} > .depend.X && mv .depend.X .depend
@@ -104,7 +128,7 @@ src:
 	echo $(SRC)
 
 config-test: config.c
-	gcc -DTEST=1 config.c -o config-test
+	$(CC) -DTEST=1 config.c -o config-test
 
 test:
 	$(MAKE) -C tests test DEBUG=""

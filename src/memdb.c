@@ -270,6 +270,7 @@ static void dump_errtype(char *name, struct err_type *e, FILE *f, enum printflag
 	int all = (flags & DUMP_ALL);
 	char *s;
 
+	bucket_age(bc, &e->bucket, bucket_time());
 	if (e->count || e->bucket.count || all)
 		fprintf(f, "%s:\n", name);
 	if (e->count || all) {
@@ -378,11 +379,19 @@ parse_dimm_addr(char *bl, unsigned *socketid, unsigned *channel, unsigned *dimm)
 		   channel, dimm) == 3)
 		return 1;
 	/* Add more DMI formats here */
+	/* For new AMI BIOS Node0_Bank0 */
+	if (sscanf(bl, "Node%u_Bank%u", socketid, dimm) == 2)
+		return 1;
+
+	/* For old AMI BIOS A1_BANK0*/
+	if (sscanf(bl, "A%u_BANK%u", socketid, dimm) == 2)
+		return 1;
+
 	return 0;		
 }
 
 /* Prepopulate DIMM database from BIOS information */
-void prefill_memdb(void)
+void prefill_memdb(int do_dmi)
 {
 	static int initialized;
 	int i;
@@ -395,7 +404,7 @@ void prefill_memdb(void)
 	if (!memdb_enabled)
 		return;
 	initialized = 1;
-	if (config_bool("dimm", "dmi-prepopulate") == 0)
+	if (config_bool("dimm", "dmi-prepopulate") == 0 || !do_dmi)
 		return;
 	if (opendmi() < 0)
 		return;

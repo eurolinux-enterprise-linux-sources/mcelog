@@ -85,6 +85,7 @@ static char *pidfile = pidfile_default;
 static char *logfile;
 static int debug_numerrors;
 int imc_log = -1;
+static int check_only = 0;
 
 static int is_cpu_supported(void);
 
@@ -131,7 +132,7 @@ static char *bankname(unsigned bank)
 	}
 } 
 
-static void resolveaddr(unsigned long addr)
+static void resolveaddr(unsigned long long addr)
 {
 	if (addr && do_dmi && dmi_forced)
 		dmi_decodeaddr(addr);
@@ -232,6 +233,9 @@ static char *cputype_name[] = {
 	[CPU_HASWELL] = "Haswell", /* Fill in better name */
 	[CPU_HASWELL_EPEX] = "Intel Xeon v3 (Haswell) EP/EX",
 	[CPU_BROADWELL] = "Broadwell",
+	[CPU_KNIGHTS_LANDING] = "Knights Landing",
+	[CPU_ATOM] = "ATOM",
+	[CPU_SKYLAKE] = "Skylake",
 };
 
 static struct config_choice cpu_choices[] = {
@@ -271,8 +275,11 @@ static struct config_choice cpu_choices[] = {
 	{ "haswell-ep", CPU_HASWELL_EPEX },
 	{ "haswell-ex", CPU_HASWELL_EPEX },
 	{ "broadwell", CPU_BROADWELL },
+	{ "knightslanding", CPU_KNIGHTS_LANDING },
 	{ "xeon-v2", CPU_IVY_BRIDGE_EPEX },
 	{ "xeon-v3", CPU_HASWELL_EPEX },
+	{ "atom", CPU_ATOM },
+	{ "skylake", CPU_SKYLAKE },
 	{ NULL }
 };
 
@@ -434,7 +441,8 @@ static void dump_mce(struct mce *m, unsigned recordlen)
 			mod);
 	}
 	if (cputype != CPU_SANDY_BRIDGE_EP && cputype != CPU_IVY_BRIDGE_EPEX &&
-	    cputype != CPU_HASWELL_EPEX && cputype != CPU_BROADWELL)
+	    cputype != CPU_HASWELL_EPEX && cputype != CPU_BROADWELL &&
+	    cputype != CPU_KNIGHTS_LANDING && cputype != CPU_SKYLAKE)
 		resolveaddr(m->addr);
 	if (!ascii_mode && ismemerr && (m->status & MCI_STATUS_ADDRV)) {
 		diskdb_resolve_addr(m->addr);
@@ -745,7 +753,7 @@ restart:
 			else
 				s += 3; 
 
-			n = sscanf(s, "%02x:<%016Lx> {%100s}%n",
+			n = sscanf(s, "%02x:<%016Lx> {%99s}%n",
 				   &cs,
 				   &m.ip, 
 				   symbol, &next); 
@@ -913,22 +921,35 @@ void usage(void)
 {
 	fprintf(stderr, 
 "Usage:\n"
+"\n"
 "  mcelog [options]  [mcelogdevice]\n"
 "Decode machine check error records from current kernel.\n"
+"\n"
 "  mcelog [options] --daemon\n"
 "Run mcelog in daemon mode, waiting for errors from the kernel.\n"
+"\n"
 "  mcelog [options] --client\n"
 "Query a currently running mcelog daemon for errors\n"
+"\n"
 "  mcelog [options] --ascii < log\n"
 "  mcelog [options] --ascii --file log\n"
 "Decode machine check ASCII output from kernel logs\n"
+"\n"
 "Options:\n"  
+"--version           Show the version of mcelog and exit\n"
 "--cpu CPU           Set CPU type CPU to decode (see below for valid types)\n"
+"--intel-cpu FAMILY,MODEL  Set CPU type for an Intel CPU based on family and model from cpuid\n"
+"--k8                Set the CPU to be an AMD K8\n"
+"--p4                Set the CPU to be an Intel Pentium4\n"
+"--core2             Set the CPU to be an Intel Core2\n"
+"--generic           Set the CPU to a generic version\n"
 "--cpumhz MHZ        Set CPU Mhz to decode time (output unreliable, not needed on new kernels)\n"
 "--raw		     (with --ascii) Dump in raw ASCII format for machine processing\n"
 "--daemon            Run in background waiting for events (needs newer kernel)\n"
+"--client            Query a currently running mcelog daemon for errors\n"
 "--ignorenodev       Exit silently when the device cannot be opened\n"
 "--file filename     With --ascii read machine check log from filename instead of stdin\n"
+"--logfile filename  Log decoded machine checks in file filename\n"
 "--syslog            Log decoded machine checks in syslog (default stdout or syslog for daemon)\n"	     
 "--syslog-error	     Log decoded machine checks in syslog with error level\n"
 "--no-syslog         Never log anything to syslog\n"
@@ -943,8 +964,10 @@ void usage(void)
 "--num-errors N      Only process N errors (for testing)\n"
 "--pidfile file	     Write pid of daemon into file\n"
 "--no-imc-log	     Disable extended iMC logging\n"
+"--is-cpu-supported  Exit with return code indicating whether the CPU is supported\n"
 		);
 	diskdb_usage();
+	printf("\n");
 	print_cputypes();
 	exit(1);
 }
@@ -977,6 +1000,7 @@ enum options {
 	O_PIDFILE,
 	O_DEBUG_NUMERRORS,
 	O_NO_IMC_LOG,
+	O_IS_CPU_SUPPORTED,
 };
 
 static struct option options[] = {
@@ -1010,6 +1034,7 @@ static struct option options[] = {
 	{ "pidfile", 1, NULL, O_PIDFILE },
 	{ "debug-numerrors", 0, NULL, O_DEBUG_NUMERRORS }, /* undocumented: for testing */
 	{ "no-imc-log", 0, NULL, O_NO_IMC_LOG },
+	{ "is-cpu-supported", 0, NULL, O_IS_CPU_SUPPORTED },
 	DISKDB_OPTIONS
 	{}
 };
@@ -1111,6 +1136,9 @@ static int modifier(int opt)
 		break;
 	case O_NO_IMC_LOG:
 		imc_log = 0;
+		break;
+	case O_IS_CPU_SUPPORTED:
+		check_only = 1;
 		break;
 	case 0:
 		break;
@@ -1341,15 +1369,19 @@ int main(int ac, char **av)
 
 	/* before doing anything else let's see if the CPUs are supported */
 	if (!cpu_forced && !is_cpu_supported()) {
-		fprintf(stderr, "CPU is unsupported\n");
+		if (!check_only)
+			fprintf(stderr, "CPU is unsupported\n");
 		exit(1);
 	}
+	if (check_only)
+		exit(0);
 
 	/* If the user didn't tell us not to use iMC logging, check if CPU supports it */
 	if (imc_log == -1) {
 		switch (cputype) {
 		case CPU_SANDY_BRIDGE_EP:
 		case CPU_IVY_BRIDGE_EPEX:
+		case CPU_HASWELL_EPEX:
 			imc_log = 1;
 			break;
 		default:
@@ -1381,7 +1413,7 @@ int main(int ac, char **av)
 
 	d.buf = xalloc(d.recordlen * d.loglen); 
 	if (daemon_mode) {
-		prefill_memdb();
+		prefill_memdb(do_dmi);
 		if (!do_dmi)
 			closedmi();
 		server_setup();

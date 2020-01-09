@@ -1,10 +1,10 @@
-%define last_git_commit 0fc9f70
-%define last_git_version 109
+%define last_git_commit c83713fd
+%define last_git_version 128
 
 Summary:	Tool to translate x86-64 CPU Machine Check Exception data.
 Name:		mcelog
-Version:	109
-Release:	4.%{last_git_commit}%{?dist}
+Version:	128
+Release:	1.%{last_git_commit}%{?dist}
 Epoch:		2
 Group:		System Environment/Base
 License:	GPLv2
@@ -68,6 +68,14 @@ chkconfig --add mcelogd
 %{_sysconfdir}/logrotate.d/mcelog
 
 %changelog
+* Mon Oct 26 2015  Prarit Bhargava <prarit@redhat.com> 2:128.1
+- updated to upstream 128
+- a little better documentation to /etc/mcelog/mcelog.conf [1136920]
+- Atom cpuids [1206320]
+- Broadwell-DE cpuid [1206320]
+- Skylake (0x4e and 0x5e) cpuids [1255561]
+- fix cpu buffer overflow warning [1136920]
+
 * Fri Feb 13 2015  Prarit Bhargava <prarit@redhat.com> 2:109.4
 - move triggers to /etc/mcelog
 
