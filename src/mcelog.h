@@ -115,6 +115,11 @@ enum cputype {
 	CPU_XEON75XX, 
 	CPU_SANDY_BRIDGE, 
 	CPU_SANDY_BRIDGE_EP, 
+	CPU_IVY_BRIDGE, 
+	CPU_IVY_BRIDGE_EPEX, 
+	CPU_HASWELL,
+	CPU_HASWELL_EPEX,
+	CPU_BROADWELL,
 };
 
 enum option_ranges {
@@ -139,3 +144,5 @@ extern enum syslog_opt syslog_opt;
 extern int syslog_level;
 extern enum cputype cputype;
 extern int filter_memory_errors;
+extern int imc_log;
+extern void set_imc_log(int cputype);

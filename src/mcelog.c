@@ -58,6 +58,8 @@
 #include "msg.h"
 #include "yellow.h"
 #include "page.h"
+#include "bus.h"
+#include "unknown.h"
 
 enum cputype cputype = CPU_GENERIC;	
 
@@ -82,6 +84,7 @@ static char logfile_default[] = LOG_FILE;
 static char *pidfile = pidfile_default;
 static char *logfile;
 static int debug_numerrors;
+int imc_log = -1;
 
 static int is_cpu_supported(void);
 
@@ -224,6 +227,11 @@ static char *cputype_name[] = {
 	[CPU_XEON75XX] = "Intel Xeon 7500 series",
 	[CPU_SANDY_BRIDGE] = "Sandy Bridge", /* Fill in better name */
 	[CPU_SANDY_BRIDGE_EP] = "Sandy Bridge EP", /* Fill in better name */
+	[CPU_IVY_BRIDGE] = "Ivy Bridge", /* Fill in better name */
+	[CPU_IVY_BRIDGE_EPEX] = "Intel Xeon v2 (Ivy Bridge) EP/EX", /* Fill in better name */
+	[CPU_HASWELL] = "Haswell", /* Fill in better name */
+	[CPU_HASWELL_EPEX] = "Intel Xeon v3 (Haswell) EP/EX",
+	[CPU_BROADWELL] = "Broadwell",
 };
 
 static struct config_choice cpu_choices[] = {
@@ -256,7 +264,16 @@ static struct config_choice cpu_choices[] = {
 	{ "xeon7100", CPU_P4 },
 	{ "sandybridge", CPU_SANDY_BRIDGE }, /* Fill in better name */
 	{ "sandybridge-ep", CPU_SANDY_BRIDGE_EP }, /* Fill in better name */
-	{}
+	{ "ivybridge", CPU_IVY_BRIDGE }, /* Fill in better name */
+	{ "ivybridge-ep", CPU_IVY_BRIDGE_EPEX },
+	{ "ivybridge-ex", CPU_IVY_BRIDGE_EPEX },
+	{ "haswell", CPU_HASWELL }, /* Fill in better name */
+	{ "haswell-ep", CPU_HASWELL_EPEX },
+	{ "haswell-ex", CPU_HASWELL_EPEX },
+	{ "broadwell", CPU_BROADWELL },
+	{ "xeon-v2", CPU_IVY_BRIDGE_EPEX },
+	{ "xeon-v3", CPU_HASWELL_EPEX },
+	{ NULL }
 };
 
 static void print_cputypes(void)
@@ -416,7 +433,9 @@ static void dump_mce(struct mce *m, unsigned recordlen)
 			fam,
 			mod);
 	}
-	resolveaddr(m->addr);
+	if (cputype != CPU_SANDY_BRIDGE_EP && cputype != CPU_IVY_BRIDGE_EPEX &&
+	    cputype != CPU_HASWELL_EPEX && cputype != CPU_BROADWELL)
+		resolveaddr(m->addr);
 	if (!ascii_mode && ismemerr && (m->status & MCI_STATUS_ADDRV)) {
 		diskdb_resolve_addr(m->addr);
 	}
@@ -499,11 +518,12 @@ int is_cpu_supported(void)
 		} 
 		if (seen == ALL) {
 			if (!strcmp(vendor,"AuthenticAMD")) {
-				if (family == 15)
+				if (family == 15) {
 					cputype = CPU_K8;
-				if (family >= 15)
-					SYSERRprintf("AMD Processor family %d: Please load edac_mce_amd module.\n", family);
-				return 0;
+				} else if (family >= 16) {
+					SYSERRprintf("ERROR: AMD Processor family %d: mcelog does not support this processor.  Please use the edac_mce_amd module instead.\n", family);
+					return 0;
+				}
 			} else if (!strcmp(vendor,"GenuineIntel"))
 				cputype = select_intel_cputype(family, model);
 			/* Add checks for other CPUs here */	
@@ -552,6 +572,12 @@ static char *skipgunk(char *s)
 		if (*s == ']')
 			++s;
 	}
+
+	s = skipspace(s);
+
+	if (strncmp(s, "mce: [Hardware Error]:", 22) == 0)
+		s += 22;
+
 	return skipspace(s);
 }
 
@@ -847,7 +873,7 @@ static void remove_pidfile(void)
 static void signal_exit(int sig)
 {
 	remove_pidfile();
-	_exit(sig);
+	_exit(EXIT_SUCCESS);
 }
 
 static void setup_pidfile(char *s)
@@ -916,6 +942,7 @@ void usage(void)
 "--foreground        Keep in foreground (for debugging)\n"
 "--num-errors N      Only process N errors (for testing)\n"
 "--pidfile file	     Write pid of daemon into file\n"
+"--no-imc-log	     Disable extended iMC logging\n"
 		);
 	diskdb_usage();
 	print_cputypes();
@@ -949,6 +976,7 @@ enum options {
 	O_NUMERRORS,
 	O_PIDFILE,
 	O_DEBUG_NUMERRORS,
+	O_NO_IMC_LOG,
 };
 
 static struct option options[] = {
@@ -981,6 +1009,7 @@ static struct option options[] = {
 	{ "num-errors", 1, NULL, O_NUMERRORS },
 	{ "pidfile", 1, NULL, O_PIDFILE },
 	{ "debug-numerrors", 0, NULL, O_DEBUG_NUMERRORS }, /* undocumented: for testing */
+	{ "no-imc-log", 0, NULL, O_NO_IMC_LOG },
 	DISKDB_OPTIONS
 	{}
 };
@@ -1057,11 +1086,8 @@ static int modifier(int opt)
 		break;
 	case O_DAEMON:
 		daemon_mode = 1;
-		if (!logfile && !foreground)
-			logfile = logfile_default;
 		if (!(syslog_opt & SYSLOG_FORCE))
 			syslog_opt = SYSLOG_REMARK|SYSLOG_ERROR;
-
 		break;
 	case O_FILE:
 		inputfile = optarg;
@@ -1070,8 +1096,6 @@ static int modifier(int opt)
 		foreground = 1;	
 		if (!(syslog_opt & SYSLOG_FORCE))
 			syslog_opt = SYSLOG_FORCE;
-		if (logfile == logfile_default)
-			logfile = NULL;
 		break;
 	case O_NUMERRORS:
 		numerrors = atoi(optarg);
@@ -1085,6 +1109,9 @@ static int modifier(int opt)
 	case O_DEBUG_NUMERRORS:
 		debug_numerrors = 1;
 		break;
+	case O_NO_IMC_LOG:
+		imc_log = 0;
+		break;
 	case 0:
 		break;
 	default:
@@ -1095,6 +1122,9 @@ static int modifier(int opt)
 
 static void modifier_finish(void)
 {
+	if(!foreground && daemon_mode && !logfile && !(syslog_opt & SYSLOG_LOG)) {
+		logfile = logfile_default;
+	}
 	if (logfile) {
 		if (open_logfile(logfile) < 0) {
 			if (daemon_mode && !(syslog_opt & SYSLOG_FORCE))
@@ -1134,6 +1164,8 @@ static void general_setup(void)
 {
 	trigger_setup();
 	yellow_setup();
+	bus_setup();
+	unknown_setup();
 	config_cred("global", "run-credentials", &runcred);
 	if (config_bool("global", "filter-memory-errors") == 1)
 		filter_memory_errors = 1;
@@ -1159,8 +1191,8 @@ static void drop_cred(void)
 static void process(int fd, unsigned recordlen, unsigned loglen, char *buf)
 {	
 	int i; 
-	int len;
-	int finish = 0;
+	int len, count;
+	int finish = 0, flags;
 
 	if (recordlen == 0) {
 		Wprintf("no data in mce record\n");
@@ -1173,7 +1205,14 @@ static void process(int fd, unsigned recordlen, unsigned loglen, char *buf)
 		return;
 	}
 
-	for (i = 0; (i < len / (int)recordlen) && !finish; i++) { 
+	count = len / (int)recordlen;
+	if (count == (int)loglen) {
+		if ((ioctl(fd, MCE_GETCLEAR_FLAGS, &flags) == 0) &&
+		    (flags & (1 << MCE_OVERFLOW)))
+			Eprintf("Warning: MCE buffer is overflowed.\n");
+	}
+
+	for (i = 0; (i < count) && !finish; i++) {
 		struct mce *mce = (struct mce *)(buf + i*recordlen);
 		mce_prepare(mce);
 		if (numerrors > 0 && --numerrors == 0)
@@ -1301,9 +1340,22 @@ int main(int ac, char **av)
 	} 
 
 	/* before doing anything else let's see if the CPUs are supported */
-	if (daemon_mode && !cpu_forced && !is_cpu_supported()) {
-		SYSERRprintf("CPU is unsupported\n");
+	if (!cpu_forced && !is_cpu_supported()) {
+		fprintf(stderr, "CPU is unsupported\n");
 		exit(1);
+	}
+
+	/* If the user didn't tell us not to use iMC logging, check if CPU supports it */
+	if (imc_log == -1) {
+		switch (cputype) {
+		case CPU_SANDY_BRIDGE_EP:
+		case CPU_IVY_BRIDGE_EPEX:
+			imc_log = 1;
+			break;
+		default:
+			imc_log = 0;
+			break;
+		}
 	}
 
 	modifier_finish();
@@ -1334,6 +1386,8 @@ int main(int ac, char **av)
 			closedmi();
 		server_setup();
 		page_setup();
+		if (imc_log)
+			set_imc_log(cputype);
 		drop_cred();
 		register_pollcb(fd, POLLIN, process_mcefd, &d);
 		if (!foreground && daemon(0, need_stdout()) < 0)

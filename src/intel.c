@@ -22,6 +22,9 @@
 #include "nehalem.h"
 #include "memdb.h"
 #include "page.h"
+#include "sandy-bridge.h"
+#include "ivy-bridge.h"
+#include "haswell.h"
 #include "xeon75xx.h"
 
 int memory_error_support;
@@ -29,7 +32,9 @@ int memory_error_support;
 void intel_cpu_init(enum cputype cpu)
 {
 	if (cpu == CPU_NEHALEM || cpu == CPU_XEON75XX || cpu == CPU_INTEL ||
-	    cpu == CPU_SANDY_BRIDGE || cpu == CPU_SANDY_BRIDGE_EP)
+	    cpu == CPU_SANDY_BRIDGE || cpu == CPU_SANDY_BRIDGE_EP ||
+	    cpu == CPU_IVY_BRIDGE || cpu == CPU_IVY_BRIDGE_EPEX ||
+	    cpu == CPU_HASWELL || cpu == CPU_HASWELL_EPEX || cpu == CPU_BROADWELL)
 		memory_error_support = 1;
 }
 
@@ -55,10 +60,20 @@ enum cputype select_intel_cputype(int family, int model)
 			return CPU_NEHALEM;
 		else if (model == 0x2e || model == 0x2f)
 			return CPU_XEON75XX;
-		else if (model == 0x2a || model == 0x3a)
+		else if (model == 0x2a)
 			return CPU_SANDY_BRIDGE;
 		else if (model == 0x2d)
 			return CPU_SANDY_BRIDGE_EP;
+		else if (model == 0x3a)
+			return CPU_IVY_BRIDGE;
+		else if (model == 0x3e)
+			return CPU_IVY_BRIDGE_EPEX;
+		else if (model == 0x3c || model == 0x45 || model == 0x46)
+			return CPU_HASWELL;
+		else if (model == 0x3f)
+			return CPU_HASWELL_EPEX;
+		else if (model == 0x3d)
+			return CPU_BROADWELL;
 		if (model > 0x1a) {
 			Eprintf("Family 6 Model %x CPU: only decoding architectural errors\n",
 				model);
@@ -97,6 +112,12 @@ static int intel_memory_error(struct mce *m, unsigned recordlen)
 			break;
 		case CPU_XEON75XX:
 			xeon75xx_memory_error(m, recordlen, channel, dimm);
+			break;
+		case CPU_SANDY_BRIDGE_EP:
+			sandy_bridge_ep_memerr_misc(m, channel, dimm);
+			break;
+		case CPU_IVY_BRIDGE_EPEX:
+			ivy_bridge_ep_memerr_misc(m, channel, dimm);
 			break;
 		default:
 			break;

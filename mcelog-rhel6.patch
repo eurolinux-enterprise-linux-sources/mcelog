@@ -1,0 +1,268 @@
+From 4dc2efe7f78aec9401594e1d22961cea09605a19 Mon Sep 17 00:00:00 2001
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Sun, 8 Feb 2015 12:09:53 -0500
+Subject: [PATCH] rhel6 patch
+
+---
+ intel.c          |    4 ++++
+ mcelog.8         |   12 ++++++++++++
+ mcelog.c         |    5 +++++
+ mcelog.conf      |   14 +++++++++-----
+ mcelog.cron      |   11 +++++++++++
+ mcelog.init      |   34 +++++++++++++++++++---------------
+ mcelog.sysconfig |   10 ++++++++++
+ 7 files changed, 70 insertions(+), 20 deletions(-)
+ create mode 100644 mcelog.sysconfig
+
+diff --git a/intel.c b/intel.c
+index 84f7e9c..1393a22 100644
+--- a/intel.c
++++ b/intel.c
+@@ -75,14 +75,18 @@ enum cputype select_intel_cputype(int family, int model)
+ 		else if (model == 0x3d)
+ 			return CPU_BROADWELL;
+ 		if (model > 0x1a) {
++#if 0
+ 			Eprintf("Family 6 Model %x CPU: only decoding architectural errors\n",
+ 				model);
++#endif
+ 			return CPU_INTEL; 
+ 		}
+ 	}
+ 	if (family > 6) { 
++#if 0
+ 		Eprintf("Family %u Model %x CPU: only decoding architectural errors\n",
+ 				family, model);
++#endif
+ 		return CPU_INTEL;
+ 	}
+ 	Eprintf("Unknown Intel CPU type family %x model %x\n", family, model);
+diff --git a/mcelog.8 b/mcelog.8
+index f8a77c4..6119943 100644
+--- a/mcelog.8
++++ b/mcelog.8
+@@ -18,6 +18,8 @@ mcelog [options] \-\-ascii
+ .\"mcelog [options] \-\-dump-memory[=locator]
+ .br
+ mcelog \-\-version
++.br
++mcelog \-\-supported
+ .SH DESCRIPTION
+ X86 CPUs report errors detected by the CPU as
+ .I machine check events (MCEs). 
+@@ -227,6 +229,13 @@ not to with the
+ option. You might need this option when decoding old logs
+ from a system where this mode was not enabled.
+ 
++Mcelog will enable extended error reporting from the memory
++controller on processors that support it unless you tell it
++not to with the
++.B \-\-no-imc-log
++option. You might need this option when decoding old logs
++from a system where this mode was not enabled.
++
+ .\".B \-\-database filename
+ .\"specifies the memory module error database file. Default is
+ .\"/var/lib/memory-errors.  It is only used together with DMI decoding.
+@@ -259,6 +268,9 @@ from a system where this mode was not enabled.
+ .B \-\-version
+ displays the version of mcelog and exits.
+ 
++.B \-\-supported
++returns 0 if the system has processors which support MCE, and 1 otherwise.
++
+ .SH CONFIG FILE
+ mcelog supports a config file to set defaults. Command line options override
+ the config file. By default the config file is read from
+diff --git a/mcelog.c b/mcelog.c
+index 43c720e..40e32e4 100644
+--- a/mcelog.c
++++ b/mcelog.c
+@@ -977,6 +977,7 @@ enum options {
+ 	O_PIDFILE,
+ 	O_DEBUG_NUMERRORS,
+ 	O_NO_IMC_LOG,
++	O_SUPPORTED,
+ };
+ 
+ static struct option options[] = {
+@@ -1010,6 +1011,7 @@ static struct option options[] = {
+ 	{ "pidfile", 1, NULL, O_PIDFILE },
+ 	{ "debug-numerrors", 0, NULL, O_DEBUG_NUMERRORS }, /* undocumented: for testing */
+ 	{ "no-imc-log", 0, NULL, O_NO_IMC_LOG },
++	{ "supported", 0, NULL, O_SUPPORTED },
+ 	DISKDB_OPTIONS
+ 	{}
+ };
+@@ -1333,6 +1335,9 @@ int main(int ac, char **av)
+ 			noargs(ac, av);
+ 			fprintf(stderr, "mcelog %s\n", MCELOG_VERSION);
+ 			exit(0);
++		} else if (opt == O_SUPPORTED) {
++			noargs(ac, av);
++			exit(!is_cpu_supported());
+ 		} else if (diskdb_cmd(opt, ac, av)) {
+ 			exit(0);
+ 		} else if (opt == 0)
+diff --git a/mcelog.conf b/mcelog.conf
+index 6a2be26..588a38e 100644
+--- a/mcelog.conf
++++ b/mcelog.conf
+@@ -15,6 +15,10 @@
+ #no-syslog = yes   (or no to disable)
+ # when the option has a argument
+ #logfile = /tmp/logfile
++
++# by default, disable extended error logging on newer Intel processors
++no-imc-log = yes
++
+ # below are the options which are not command line options
+ 
+ # Set CPU type for which mcelog decodes events:
+@@ -122,10 +126,10 @@ socket-tracking-enabled = yes
+ # mem-uc-error-trigger = socket-memory-error-trigger
+ mem-uc-error-threshold = 100 / 24h
+ # Threshold and trigger for corrected memory errors on a socket
+-mem-ce-error-trigger = socket-memory-error-trigger
+-mem-ce-error-threshold = 100 / 24h
++#mem-ce-error-trigger = socket-memory-error-trigger
++#mem-ce-error-threshold = 100 / 24h
+ #  Log socket error threshold explicitely?
+-mem-ce-error-log = yes
++#mem-ce-error-log = yes
+ 
+ bus-uc-threshold-trigger = bus-error-trigger
+ iomca-threshold-trigger = iomca-error-trigger
+@@ -133,9 +137,9 @@ unknown-threshold-trigger = unknown-error-trigger
+ 
+ [cache]
+ # Processing of cache error thresholds reported by Intel CPUs
+-cache-threshold-trigger = cache-error-trigger
++#cache-threshold-trigger = cache-error-trigger
+ # Should cache threshold events be logged explicitely?
+-cache-threshold-log = yes
++#cache-threshold-log = yes
+ 
+ [page]
+ # Memory error accouting per 4K memory page
+diff --git a/mcelog.cron b/mcelog.cron
+index 4335caa..9fdbea2 100755
+--- a/mcelog.cron
++++ b/mcelog.cron
+@@ -1,2 +1,13 @@
+ #!/bin/bash
++
++# do not run if mcelogd is running
++service mcelogd status >& /dev/null
++[ $? -eq 0 ] && exit 0
++
++# is mcelog supported?
++/usr/sbin/mcelog --supported >& /dev/null
++if [ $? -eq 1 ]; then
++       exit 1;
++fi
++
+ /usr/sbin/mcelog --ignorenodev --filter >> /var/log/mcelog
+diff --git a/mcelog.init b/mcelog.init
+index 0abe786..273669d 100755
+--- a/mcelog.init
++++ b/mcelog.init
+@@ -7,6 +7,9 @@
+ # The paths are hardcoded and are not automatically adjusted
+ # for different prefix
+ #
++# chkconfig: 35 50 50
++# description: mcelog hardware error logging
++#
+ ### BEGIN INIT INFO
+ # Provides:		mcelog 
+ # Default-Start:	3 5
+@@ -15,23 +18,16 @@
+ # Description:          Start the mcelog hardware error logging. 
+ #                       This logs and handles CPU hardware errors on x86 systems.
+ ### END INIT INFO
++# pull in sysconfig settings
++[ -f /etc/sysconfig/mcelogd ] && . /etc/sysconfig/mcelogd
+ 
+-# put this is sysconfig
+-
+-# mcelog mode
+-# valid values: daemon, trigger, cron
+-# Recommended value daemon
+-MCELOG_MODE=daemon
+-
+-# additional options to pass to the daemon
+-# this only works in daemon mode
+-# see the manpage for details. settings can be also
+-# set in /etc/mcelog.conf
+-MCELOG_OPTIONS=""
++# Source function library.
++. /etc/init.d/functions
+ 
+ # private settings
+ MCELOG=${MCELOG:-/usr/sbin/mcelog}
+ TRIGGER=/sys/devices/system/machinecheck/machinecheck0/trigger
++LOCKFILE="/var/lock/subsys/mcelogd"
+ [ ! -x $MCELOG ] && ( echo "mcelog not found" ; exit 1 )
+ [ ! -r /dev/mcelog ] && ( echo "/dev/mcelog not active" ; exit 0 )
+ 
+@@ -51,11 +47,17 @@ esac
+ 
+ case "$1" in
+ start)
++	if [ -f $LOCKFILE ]; then
++		exit 0
++	fi
++
+ 	if [ "$MCELOG_MODE" = "daemon" ] ; then
+ 		echo "Starting mcelog daemon"
+-		startproc $MCELOG --daemon $MCELOG_OPTIONS
++		daemon $MCELOG --daemon $MCELOG_OPTIONS
++		touch $LOCKFILE
+ 	elif [ -f "$TRIGGER" ] ; then
+ 		echo $MCELOG > "$TRIGGER"
++		touch $LOCKFILE
+ 	else
+ 		echo No machine check capability
+ 	fi
+@@ -63,9 +65,11 @@ start)
+ stop)
+ 	if [ "$MCELOG_MODE" = "daemon" ] ; then
+ 		echo "Stopping mcelog"
+-		killproc -TERM $MCELOG
++		killproc $MCELOG -TERM
++		rm -f $LOCKFILE
+ 	elif [ "$MCELOG_MODE" = "trigger" -a -f "$TRIGGER" ]; then 
+ 		echo "" > "$TRIGGER"
++		rm -f $LOCKFILE
+ 	else
+ 		echo mcelog not running
+ 	fi
+@@ -86,7 +90,7 @@ force-reload)
+ status)
+ 	if [ "$MCELOG_MODE" = "daemon" ] ; then
+ 		echo "Checking for mcelog"
+-		checkproc $MCELOG
++		status $MCELOG
+ 	fi
+ 	;;
+ *)
+diff --git a/mcelog.sysconfig b/mcelog.sysconfig
+new file mode 100644
+index 0000000..0499f33
+--- /dev/null
++++ b/mcelog.sysconfig
+@@ -0,0 +1,10 @@
++# mcelog mode
++# valid values: daemon, trigger, cron
++# Recommended value daemon
++MCELOG_MODE=daemon
++
++# additional options to pass to the daemon
++# this only works in daemon mode
++# see the manpage for details. settings can be also
++# set in /etc/mcelog.conf
++MCELOG_OPTIONS=""
+-- 
+1.7.1
+

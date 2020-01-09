@@ -1,49 +1,16 @@
+%define last_git_commit 0fc9f70
+%define last_git_version 109
+
 Summary:	Tool to translate x86-64 CPU Machine Check Exception data.
 Name:		mcelog
-Version:	101
-Release:	0%{?dist}
+Version:	109
+Release:	4.%{last_git_commit}%{?dist}
 Epoch:		2
 Group:		System Environment/Base
 License:	GPLv2
-# this source was pulled from %{URL} on Tue Aug 14 2012.  It does not contain
-# any git repository information.
-Source0:	mcelog-1.0pre3_20120814_2.tar.gz
-# fix start/stop/status/etc functions in mcelog initscript
-Patch0:		mcelog-initscript.patch
-# add /var/lock/subsys/mcelogd file
-Patch1:		mcelog-lockfile.patch
-# add defaults to /etc/mcelog/mcelog.conf
-Patch2:		mcelog-conf.patch
-# Update README to be RHEL specific
-Patch3:		mcelog-make-README-RHEL-specific.patch
-# Add --supported flag (this must always be backported!)
-Patch4:		mcelog-add-supported-flag.patch
-# Fix support for AMD processor 15
-Patch5:		mcelog-fix-support-for-AMD-15.patch
-# Add SandyBridge-EP support (up to commit 187b1ae)
-Patch6:		mcelog-sandybridge-ep-support.patch
-# Add IvyBridge support (up to commit c824617)
-Patch7:		mcelog-ivybridge-support.patch
-# Fix support for AMD processor 15
-Patch8:		mcelog-fix-support-for-AMD-15-v2.patch
-# Edit mcelog.cron so it doesn't run by default
-Patch9:		mcelog-no-cronjob-if-service-is-running.patch
-# Add Haswell support
-Patch10:	mcelog-haswell-support.patch
-# Disable extended logging support by default
-Patch11:	mcelog-disable-extended-logging-support.patch
-# Add chkconfig levels to mcelogd initscript
-Patch12:	mcelog-add-chkconfig-levels.patch
-# Fix ivybridge detection (commits b29cc4d and 2577aeb)
-Patch13:	mcelog-fix-ivybridge-detection.patch
-# cleanup .orig and .rej patch files
-Patch14:	mcelog-cleanup-patch-files.patch
-# Add additional Haswell CPU ID (0x3F, decimal 63)
-Patch15:	mcelog-add-haswell-cpuid-63.patch
-# Modify --daemon logic to allow syslog-only output
-Patch16:	mcelog-modify-daemon-log-to-allow-syslog-only.patch
-# Add MISC register for IO MCA and fix leaky bucket logging. (up to tag v101)
-Patch17:	mcelog-io-mca-and-leaky-bucket.patch
+Source0:	mcelog-%{last_git_version}-%{last_git_commit}.tar.gz
+# single unified patch relative to upstream
+Patch0:		mcelog-rhel6.patch
 URL:		https://github.com/andikleen/mcelog.git
 Buildroot:	%{_tmppath}/%{name}-%{version}-root
 ExclusiveArch:	x86_64
@@ -53,25 +20,11 @@ mcelog is a daemon that collects and decodes Machine Check Exception data
 on x86-64 machines.
 
 %prep
-%setup -q -n %{name}-1.0pre3_20120814_2
+%setup -q -n %{name}-%{last_git_version}-%{last_git_commit}
 %patch0 -p1
-%patch1 -p1
-%patch2 -p1
-%patch3 -p1
-%patch4 -p1
-%patch5 -p1
-%patch6 -p1
-%patch7 -p1
-%patch8 -p1
-%patch9 -p1
-%patch10 -p1
-%patch11 -p1
-%patch12 -p1
-%patch13 -p1
-%patch14 -p1
-%patch15 -p1
-%patch16 -p1
-%patch17 -p1
+
+# This can be removed at the next update.
+chmod a+x triggers/*
 
 %build
 make CFLAGS="$RPM_OPT_FLAGS -fpie -pie"
@@ -92,6 +45,7 @@ install -m 755 mcelog.init $RPM_BUILD_ROOT%{_sysconfdir}/rc.d/init.d/mcelogd
 cp mcelog.sysconfig $RPM_BUILD_ROOT%{_sysconfdir}/sysconfig/mcelogd
 cp mcelog.conf $RPM_BUILD_ROOT%{_sysconfdir}/mcelog/mcelog.conf
 cp mcelog.logrotate $RPM_BUILD_ROOT%{_sysconfdir}/logrotate.d/mcelog
+cp triggers/* $RPM_BUILD_ROOT%{_sysconfdir}/mcelog/
 
 cd ..
 chmod -R a-s $RPM_BUILD_ROOT
@@ -110,10 +64,23 @@ chkconfig --add mcelogd
 %attr(0644,root,root) %{_mandir}/*/*
 %attr(0755,root,root) %{_sysconfdir}/rc.d/init.d/mcelogd
 %{_sysconfdir}/sysconfig/mcelogd
-%{_sysconfdir}/mcelog/mcelog.conf
+%{_sysconfdir}/mcelog/
 %{_sysconfdir}/logrotate.d/mcelog
 
 %changelog
+* Fri Feb 13 2015  Prarit Bhargava <prarit@redhat.com> 2:109.4
+- move triggers to /etc/mcelog
+
+* Tue Feb 10 2015  Prarit Bhargava <prarit@redhat.com> 2:109.3
+- rename source tarball to 109
+
+* Fri Feb  6 2015  Prarit Bhargava <prarit@redhat.com> 2:109.2
+- unify all rhel patches into single patch for simplicity
+
+* Fri Feb  6 2015  Prarit Bhargava <prarit@redhat.com> 2:109.1
+- updated to upstream 109, brought in previous Haswell and additional fixes
+- add Broadwell support, currently unsupported in kernel
+
 * Wed Mar 26 2014  Prarit Bhargava <prarit@redhat.com> 2:101.0
 - Decode MISC register when IO MCA occurs
 - add and fix leaky bucket logging
