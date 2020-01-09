@@ -1,0 +1,13 @@
+diff -urNp mcelog-1.0pre3_20120814_2.orig/intel.c mcelog-1.0pre3_20120814_2/intel.c
+--- mcelog-1.0pre3_20120814_2.orig/intel.c	2014-03-21 15:03:32.849145963 -0400
++++ mcelog-1.0pre3_20120814_2/intel.c	2014-03-21 15:04:13.903045145 -0400
+@@ -67,7 +67,8 @@ enum cputype select_intel_cputype(int fa
+ 			return CPU_IVY_BRIDGE;
+ 		else if (model == 0x3e)
+ 			return CPU_IVY_BRIDGE_EPEX;
+-		else if (model == 0x3c || model == 0x45 || model == 0x46)
++		else if (model == 0x3c || model == 0x3f || model == 0x45 ||
++			 model == 0x46)
+ 			return CPU_HASWELL;
+ 		if (model > 0x1a) {
+ #if 0

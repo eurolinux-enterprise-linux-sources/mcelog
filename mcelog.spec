@@ -1,13 +1,13 @@
 Summary:	Tool to translate x86-64 CPU Machine Check Exception data.
 Name:		mcelog
-Version:	1.0pre3_20120814_2
-Release:	0.13%{?dist}
-Epoch:		1
+Version:	101
+Release:	0%{?dist}
+Epoch:		2
 Group:		System Environment/Base
 License:	GPLv2
 # this source was pulled from %{URL} on Tue Aug 14 2012.  It does not contain
 # any git repository information.
-Source0:	mcelog-%{version}.tar.gz
+Source0:	mcelog-1.0pre3_20120814_2.tar.gz
 # fix start/stop/status/etc functions in mcelog initscript
 Patch0:		mcelog-initscript.patch
 # add /var/lock/subsys/mcelogd file
@@ -31,7 +31,19 @@ Patch9:		mcelog-no-cronjob-if-service-is-running.patch
 # Add Haswell support
 Patch10:	mcelog-haswell-support.patch
 # Disable extended logging support by default
-Patch11:	 mcelog-disable-extended-logging-support.patch
+Patch11:	mcelog-disable-extended-logging-support.patch
+# Add chkconfig levels to mcelogd initscript
+Patch12:	mcelog-add-chkconfig-levels.patch
+# Fix ivybridge detection (commits b29cc4d and 2577aeb)
+Patch13:	mcelog-fix-ivybridge-detection.patch
+# cleanup .orig and .rej patch files
+Patch14:	mcelog-cleanup-patch-files.patch
+# Add additional Haswell CPU ID (0x3F, decimal 63)
+Patch15:	mcelog-add-haswell-cpuid-63.patch
+# Modify --daemon logic to allow syslog-only output
+Patch16:	mcelog-modify-daemon-log-to-allow-syslog-only.patch
+# Add MISC register for IO MCA and fix leaky bucket logging. (up to tag v101)
+Patch17:	mcelog-io-mca-and-leaky-bucket.patch
 URL:		https://github.com/andikleen/mcelog.git
 Buildroot:	%{_tmppath}/%{name}-%{version}-root
 ExclusiveArch:	x86_64
@@ -41,7 +53,7 @@ mcelog is a daemon that collects and decodes Machine Check Exception data
 on x86-64 machines.
 
 %prep
-%setup -q -n %{name}-%{version}
+%setup -q -n %{name}-1.0pre3_20120814_2
 %patch0 -p1
 %patch1 -p1
 %patch2 -p1
@@ -54,6 +66,12 @@ on x86-64 machines.
 %patch9 -p1
 %patch10 -p1
 %patch11 -p1
+%patch12 -p1
+%patch13 -p1
+%patch14 -p1
+%patch15 -p1
+%patch16 -p1
+%patch17 -p1
 
 %build
 make CFLAGS="$RPM_OPT_FLAGS -fpie -pie"
@@ -66,12 +84,15 @@ mkdir -p $RPM_BUILD_ROOT%{_sbindir}
 mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/rc.d/init.d
 mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/sysconfig
 mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/mcelog
+mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}/logrotate.d
 install mcelog $RPM_BUILD_ROOT%{_sbindir}/mcelog
 install mcelog.cron $RPM_BUILD_ROOT%{_sysconfdir}/cron.hourly/mcelog.cron
 cp mcelog.8 $RPM_BUILD_ROOT%{_mandir}/man8
 install -m 755 mcelog.init $RPM_BUILD_ROOT%{_sysconfdir}/rc.d/init.d/mcelogd
 cp mcelog.sysconfig $RPM_BUILD_ROOT%{_sysconfdir}/sysconfig/mcelogd
 cp mcelog.conf $RPM_BUILD_ROOT%{_sysconfdir}/mcelog/mcelog.conf
+cp mcelog.logrotate $RPM_BUILD_ROOT%{_sysconfdir}/logrotate.d/mcelog
+
 cd ..
 chmod -R a-s $RPM_BUILD_ROOT
 
@@ -90,8 +111,25 @@ chkconfig --add mcelogd
 %attr(0755,root,root) %{_sysconfdir}/rc.d/init.d/mcelogd
 %{_sysconfdir}/sysconfig/mcelogd
 %{_sysconfdir}/mcelog/mcelog.conf
+%{_sysconfdir}/logrotate.d/mcelog
 
 %changelog
+* Wed Mar 26 2014  Prarit Bhargava <prarit@redhat.com> 2:101.0
+- Decode MISC register when IO MCA occurs
+- add and fix leaky bucket logging
+- exit with EXIT_SUCCESS (aka 0) when stopped by signal
+- Fix missing handling for flag MCE_GETCLEAR_FLAGS
+- Decode new simple error code number 6
+- introduce new NVR scheme to sync with upstream
+
+* Fri Mar 21 2014  Prarit Bhargava <prarit@redhat.com> 1:1.0pre3_20120814_2-0.14
+- add /etc/logrotate.d/mcelog file [849252]
+- add chkconfig levels to mcelogd initscript [1006293]
+- fix IvyBridge detection (commits b29cc4d and 2577aeb) [1079360]
+- cleanup .orig and .rej patch files [1059227]
+- add Haswell CPUID 0x3f [1079501]
+- Modify --daemon logic to allow syslog-only output [872387]
+
 * Tue Aug 20 2013  Prarit Bhargava <prarit@redhat.com> 1:1.0pre3_20120814_2-0.13
 - update fix for mcelog.cron not running if mcelogd service is running [875824]
 

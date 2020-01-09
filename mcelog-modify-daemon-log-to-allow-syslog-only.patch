@@ -1,0 +1,81 @@
+From c3c85d0efc01d8d44244e72a7bfbdbc26796e447 Mon Sep 17 00:00:00 2001
+From: Brian De Wolf <git@bldewolf.com>
+Date: Fri, 26 Oct 2012 15:47:12 -0700
+Subject: [PATCH] Modify --daemon logic to allow syslog-only output
+
+At some point, the --daemon option was modified to force the usage of
+--logfile.  Either the user sets it or the daemon uses a default value.  I
+suspect this is to ensure that the daemon doesn't start without a logging
+output.  This is a good idea, but the implementation also makes it impossible
+to run the daemon in a syslog-only mode.
+
+This patch changes the behavior so that, instead of --daemon implying a default
+--logfile, --daemon without an output option implies the default --logfile.
+
+With this change, "mcelog --daemon --syslog" no longer has the confusing
+behavior of opening the default logfile.  The other configuration paths should
+be unchanged.
+
+Tested-and-Submitted-by: Prarit Bhargava <prarit@redhat.com>
+---
+ mcelog.8 |    8 +++++++-
+ mcelog.c |    8 +++-----
+ 2 files changed, 10 insertions(+), 6 deletions(-)
+
+diff --git a/mcelog.8 b/mcelog.8
+index b8c0994..d0e5591 100644
+--- a/mcelog.8
++++ b/mcelog.8
+@@ -181,7 +181,13 @@ With the
+ .B \-\-daemon
+ option mcelog will run in the background. This gives the fastest reaction
+ time and is the recommended operating mode.
+-This option implies 
++If an output option isn't selected (
++.I \-\-logfile
++or
++.I \-\-syslog
++or
++.I \-\-syslog-error
++), this option implies
+ .I \-\-logfile=/var/log/mcelog. 
+ Important messages will be logged as one-liner summaries to syslog
+ unless 
+diff --git a/mcelog.c b/mcelog.c
+index 203d42d..e45957b 100644
+--- a/mcelog.c
++++ b/mcelog.c
+@@ -1058,11 +1058,8 @@ static int modifier(int opt)
+ 		break;
+ 	case O_DAEMON:
+ 		daemon_mode = 1;
+-		if (!logfile && !foreground)
+-			logfile = logfile_default;
+ 		if (!(syslog_opt & SYSLOG_FORCE))
+ 			syslog_opt = SYSLOG_REMARK|SYSLOG_ERROR;
+-
+ 		break;
+ 	case O_FILE:
+ 		inputfile = optarg;
+@@ -1071,8 +1068,6 @@ static int modifier(int opt)
+ 		foreground = 1;	
+ 		if (!(syslog_opt & SYSLOG_FORCE))
+ 			syslog_opt = SYSLOG_FORCE;
+-		if (logfile == logfile_default)
+-			logfile = NULL;
+ 		break;
+ 	case O_NUMERRORS:
+ 		numerrors = atoi(optarg);
+@@ -1096,6 +1091,9 @@ static int modifier(int opt)
+ 
+ static void modifier_finish(void)
+ {
++	if(!foreground && daemon_mode && !logfile && !(syslog_opt & SYSLOG_LOG)) {
++		logfile = logfile_default;
++	}
+ 	if (logfile) {
+ 		if (open_logfile(logfile) < 0) {
+ 			if (daemon_mode && !(syslog_opt & SYSLOG_FORCE))
+-- 
+1.7.9.3
+
