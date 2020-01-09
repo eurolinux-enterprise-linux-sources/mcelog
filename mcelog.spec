@@ -1,7 +1,7 @@
 Summary:	Tool to translate x86-64 CPU Machine Check Exception data.
 Name:		mcelog
 Version:	1.0pre3_20120814_2
-Release:	0.6%{?dist}
+Release:	0.13%{?dist}
 Epoch:		1
 Group:		System Environment/Base
 License:	GPLv2
@@ -20,7 +20,19 @@ Patch3:		mcelog-make-README-RHEL-specific.patch
 Patch4:		mcelog-add-supported-flag.patch
 # Fix support for AMD processor 15
 Patch5:		mcelog-fix-support-for-AMD-15.patch
-URL:		http://git.kernel.org/?p=utils/cpu/mce/mcelog.git
+# Add SandyBridge-EP support (up to commit 187b1ae)
+Patch6:		mcelog-sandybridge-ep-support.patch
+# Add IvyBridge support (up to commit c824617)
+Patch7:		mcelog-ivybridge-support.patch
+# Fix support for AMD processor 15
+Patch8:		mcelog-fix-support-for-AMD-15-v2.patch
+# Edit mcelog.cron so it doesn't run by default
+Patch9:		mcelog-no-cronjob-if-service-is-running.patch
+# Add Haswell support
+Patch10:	mcelog-haswell-support.patch
+# Disable extended logging support by default
+Patch11:	 mcelog-disable-extended-logging-support.patch
+URL:		https://github.com/andikleen/mcelog.git
 Buildroot:	%{_tmppath}/%{name}-%{version}-root
 ExclusiveArch:	x86_64
 
@@ -36,6 +48,12 @@ on x86-64 machines.
 %patch3 -p1
 %patch4 -p1
 %patch5 -p1
+%patch6 -p1
+%patch7 -p1
+%patch8 -p1
+%patch9 -p1
+%patch10 -p1
+%patch11 -p1
 
 %build
 make CFLAGS="$RPM_OPT_FLAGS -fpie -pie"
@@ -74,6 +92,27 @@ chkconfig --add mcelogd
 %{_sysconfdir}/mcelog/mcelog.conf
 
 %changelog
+* Tue Aug 20 2013  Prarit Bhargava <prarit@redhat.com> 1:1.0pre3_20120814_2-0.13
+- update fix for mcelog.cron not running if mcelogd service is running [875824]
+
+* Wed Aug 14 2013  Prarit Bhargava <prarit@redhat.com> 1:1.0pre3_20120814_2-0.12
+- Disable extended logging support [BZ 996634]
+
+* Wed Aug 14 2013  Prarit Bhargava <prarit@redhat.com> 1:1.0pre3_20120814_2-0.11
+- Add support for Haswell [BZ 991079]
+
+* Mon Jun  3 2013  Prarit Bhargava <prarit@redhat.com> 1:1.0pre3_20120814_2-0.10
+- do not run mcelog.cron if mcelogd service is running [875824]
+
+* Fri Mar 22 2013  Prarit Bhargava <prarit@redhat.com> 1:1.0pre3_20120814_2-0.9
+- update fix for AMD family 15 is supported in mcelog
+
+* Tue Mar 19 2013  Prarit Bhargava <prarit@redhat.com> 1:1.0pre3_20120814_2-0.8
+- Add support for IvyBridge [BZ 881555]
+
+* Mon Mar 18 2013  Prarit Bhargava <prarit@redhat.com> 1:1.0pre3_20120814_2-0.7
+- Add support for SandyBridge EP [BZ 922873]
+
 * Wed Oct 31 2012  Prarit Bhargava <prarit@redhat.com> 1:1.0pre3_20120814_2-0.6
 - AMD family 15 is supported in mcelog [BZ 871249]
 

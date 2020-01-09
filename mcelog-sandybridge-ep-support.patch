@@ -1,0 +1,566 @@
+RHEL6 add SandyBridge-EP support
+
+Backport of following upstream commits
+
+187b1ae Add Memory Controller decode for SandyBridge-EP platform
+33a135a Update PCU decode for SandyBridge-EP platform
+41d095f Fix 'implicit declaration' warnings
+0f5d023 Add support for Sandy Bridge extended error logging
+c688965 Add method to lookup whether a DIMM exists in memdb
+1ab6403 Add DMI parse rule for Sandy Bridge -EP systems
+97f21ce resolveaddr() does more harm than good on Sandy Bridge -EP
+1967a3a Move test_prefix() definition from p4.c to bitfield.h
+87c1d6d fix the issue that page-offline takes action too early
+bec51ee Add MCA 0x05 support.
+0497962 Added the ability to use DESTDIR in Makefile during install
+9b7c6e0 mcelog: accept large SMBIOS tables
+
+
+diff -urNp mcelog-1.0pre3_20120814_2.orig/bitfield.h mcelog-1.0pre3_20120814_2/bitfield.h
+--- mcelog-1.0pre3_20120814_2.orig/bitfield.h	2013-03-18 13:05:20.523225923 -0400
++++ mcelog-1.0pre3_20120814_2/bitfield.h	2013-03-18 13:29:49.010783935 -0400
+@@ -30,3 +30,8 @@ extern char *reserved_2bits[4];
+ 
+ #define MASK(x) ((1ULL << (1 + (x))) - 1)
+ #define EXTRACT(v, a, b) (((v) >> (a)) & MASK((b)-(a)))
++
++static inline int test_prefix(int nr, __u32 value)
++{
++	return ((value >> nr) == 1);
++}
+diff -urNp mcelog-1.0pre3_20120814_2.orig/dmi.c mcelog-1.0pre3_20120814_2/dmi.c
+--- mcelog-1.0pre3_20120814_2.orig/dmi.c	2013-03-18 13:05:20.501225757 -0400
++++ mcelog-1.0pre3_20120814_2/dmi.c	2013-03-18 13:27:54.885782566 -0400
+@@ -48,7 +48,7 @@ struct anchor { 
+ 	char fmt[5];
+ 	char str2[5]; /* _DMI_ */
+ 	char csum2;
+-	short length;
++	unsigned short length;
+ 	unsigned table;
+ 	unsigned short numentries;
+ 	char bcdrev;
+diff -urNp mcelog-1.0pre3_20120814_2.orig/intel.c mcelog-1.0pre3_20120814_2/intel.c
+--- mcelog-1.0pre3_20120814_2.orig/intel.c	2013-03-18 13:05:20.520225902 -0400
++++ mcelog-1.0pre3_20120814_2/intel.c	2013-03-18 13:30:43.648280151 -0400
+@@ -22,6 +22,7 @@
+ #include "nehalem.h"
+ #include "memdb.h"
+ #include "page.h"
++#include "sandy-bridge.h"
+ #include "xeon75xx.h"
+ 
+ int memory_error_support;
+@@ -102,6 +103,9 @@ static int intel_memory_error(struct mce
+ 		case CPU_XEON75XX:
+ 			xeon75xx_memory_error(m, recordlen, channel, dimm);
+ 			break;
++		case CPU_SANDY_BRIDGE_EP:
++			sandy_bridge_ep_memerr_misc(m, channel, dimm);
++			break;
+ 		default:
+ 			break;
+ 		} 
+diff -urNp mcelog-1.0pre3_20120814_2.orig/Makefile mcelog-1.0pre3_20120814_2/Makefile
+--- mcelog-1.0pre3_20120814_2.orig/Makefile	2013-03-18 13:05:20.499225714 -0400
++++ mcelog-1.0pre3_20120814_2/Makefile	2013-03-18 13:29:59.486878562 -0400
+@@ -32,7 +32,7 @@ OBJ := p4.o k8.o mcelog.o dmi.o tsc.o co
+        nehalem.o dunnington.o tulsa.o config.o memutil.o msg.o   \
+        eventloop.o leaky-bucket.o memdb.o server.o trigger.o 	 \
+        client.o cache.o sysfs.o yellow.o page.o rbtree.o 	 \
+-       xeon75xx.o sandy-bridge.o
++       xeon75xx.o sandy-bridge.o msr.o
+ DISKDB_OBJ := diskdb.o dimm.o db.o
+ CLEAN := mcelog dmi tsc dbquery .depend .depend.X dbquery.o ${DISKDB_OBJ}
+ DOC := mce.pdf
+@@ -53,15 +53,15 @@ mcelog: ${OBJ}
+ # dbquery intentionally not installed by default
+ install: mcelog
+ 	mkdir -p ${etcprefix}/etc/mcelog ${prefix}/sbin ${prefix}/share/man/man8
+-	install -m 755 -p mcelog ${prefix}/sbin/mcelog
+-	install -m 644 -p mcelog.8 ${prefix}/share/man/man8
+-	install -m 644 -p -b mcelog.conf ${etcprefix}/etc/mcelog/mcelog.conf
+-	install -p mcelog.sysconfig ${etcprefex}/etc/sysconfig/mcelogd
++	mkdir -p $(DESTDIR)${etcprefix}/etc/mcelog $(DESTDIR)${prefix}/sbin $(DESTDIR)${prefix}/share/man/man8
++	install -m 755 -p mcelog $(DESTDIR)${prefix}/sbin/mcelog
++	install -m 644 -p mcelog.8 $(DESTDIR)${prefix}/share/man/man8
++	install -m 644 -p -b mcelog.conf $(DESTDIR)${etcprefix}/etc/mcelog/mcelog.conf
+ 	for i in ${TRIGGERS} ; do 						\
+-		install -m 755 -p -b triggers/$$i ${etcprefix}/etc/mcelog ; 	\
++		install -m 755 -p -b triggers/$$i $(DESTDIR)${etcprefix}/etc/mcelog ; 	\
+ 	done
+ ifdef DOCDIR
+-	install -m 644 -p ${DOC} ${DOCDIR} 
++	install -m 644 -p ${DOC} $(DESTDIR)${DOCDIR} 
+ else
+ 	echo
+ 	echo "Consider defining DOCDIR to install additional documentation"
+diff -urNp mcelog-1.0pre3_20120814_2.orig/mcelog.8 mcelog-1.0pre3_20120814_2/mcelog.8
+--- mcelog-1.0pre3_20120814_2.orig/mcelog.8	2013-03-18 13:05:20.520225902 -0400
++++ mcelog-1.0pre3_20120814_2/mcelog.8	2013-03-18 13:29:59.487878568 -0400
+@@ -216,6 +216,13 @@ option writes the process id of the daem
+ .I file.
+ Only valid in daemon mode.
+ 
++Mcelog will enable extended error reporting from the memory
++controller on processors that support it unless you tell it
++not to with the
++.B \-\-no-imc-log
++option. You might need this option when decoding old logs
++from a system where this mode was not enabled.
++
+ .\".B \-\-database filename
+ .\"specifies the memory module error database file. Default is
+ .\"/var/lib/memory-errors.  It is only used together with DMI decoding.
+diff -urNp mcelog-1.0pre3_20120814_2.orig/mcelog.c mcelog-1.0pre3_20120814_2/mcelog.c
+--- mcelog-1.0pre3_20120814_2.orig/mcelog.c	2013-03-18 13:05:20.500225733 -0400
++++ mcelog-1.0pre3_20120814_2/mcelog.c	2013-03-18 13:30:34.731200556 -0400
+@@ -82,6 +82,7 @@ static char logfile_default[] = LOG_FILE
+ static char *pidfile = pidfile_default;
+ static char *logfile;
+ static int debug_numerrors;
++int imc_log = -1;
+ 
+ static int is_cpu_supported(void);
+ 
+@@ -416,7 +417,8 @@ static void dump_mce(struct mce *m, unsi
+ 			fam,
+ 			mod);
+ 	}
+-	resolveaddr(m->addr);
++	if (cputype != CPU_SANDY_BRIDGE_EP)
++		resolveaddr(m->addr);
+ 	if (!ascii_mode && ismemerr && (m->status & MCI_STATUS_ADDRV)) {
+ 		diskdb_resolve_addr(m->addr);
+ 	}
+@@ -917,6 +919,7 @@ void usage(void)
+ "--foreground        Keep in foreground (for debugging)\n"
+ "--num-errors N      Only process N errors (for testing)\n"
+ "--pidfile file	     Write pid of daemon into file\n"
++"--no-imc-log	     Disable extended iMC logging\n"
+ 		);
+ 	diskdb_usage();
+ 	print_cputypes();
+@@ -951,6 +954,7 @@ enum options { 
+ 	O_PIDFILE,
+ 	O_DEBUG_NUMERRORS,
+ 	O_SUPPORTED,
++	O_NO_IMC_LOG,
+ };
+ 
+ static struct option options[] = {
+@@ -984,6 +988,7 @@ static struct option options[] = {
+ 	{ "pidfile", 1, NULL, O_PIDFILE },
+ 	{ "debug-numerrors", 0, NULL, O_DEBUG_NUMERRORS }, /* undocumented: for testing */
+ 	{ "supported", 0, NULL, O_SUPPORTED },
++	{ "no-imc-log", 0, NULL, O_NO_IMC_LOG },
+ 	DISKDB_OPTIONS
+ 	{}
+ };
+@@ -1088,6 +1093,9 @@ static int modifier(int opt)
+ 	case O_DEBUG_NUMERRORS:
+ 		debug_numerrors = 1;
+ 		break;
++	case O_NO_IMC_LOG:
++		imc_log = 0;
++		break;
+ 	case 0:
+ 		break;
+ 	default:
+@@ -1313,6 +1321,18 @@ int main(int ac, char **av) 
+ 		exit(1);
+ 	}
+ 
++	/* If the user didn't tell us not to use iMC logging, check if CPU supports it */
++	if (imc_log == -1) {
++		switch (cputype) {
++		case CPU_SANDY_BRIDGE_EP:
++			imc_log = 1;
++			break;
++		default:
++			imc_log = 0;
++			break;
++		}
++	}
++
+ 	modifier_finish();
+ 	if (av[optind])
+ 		logfn = av[optind++];
+@@ -1341,6 +1361,8 @@ int main(int ac, char **av) 
+ 			closedmi();
+ 		server_setup();
+ 		page_setup();
++		if (imc_log)
++			set_imc_log(cputype);
+ 		drop_cred();
+ 		register_pollcb(fd, POLLIN, process_mcefd, &d);
+ 		if (!foreground && daemon(0, need_stdout()) < 0)
+diff -urNp mcelog-1.0pre3_20120814_2.orig/mcelog.h mcelog-1.0pre3_20120814_2/mcelog.h
+--- mcelog-1.0pre3_20120814_2.orig/mcelog.h	2013-03-18 13:05:20.501225757 -0400
++++ mcelog-1.0pre3_20120814_2/mcelog.h	2013-03-18 13:29:59.489878582 -0400
+@@ -139,3 +139,5 @@ extern enum syslog_opt syslog_opt;
+ extern int syslog_level;
+ extern enum cputype cputype;
+ extern int filter_memory_errors;
++extern int imc_log;
++extern void set_imc_log(int cputype);
+diff -urNp mcelog-1.0pre3_20120814_2.orig/memdb.c mcelog-1.0pre3_20120814_2/memdb.c
+--- mcelog-1.0pre3_20120814_2.orig/memdb.c	2013-03-18 13:05:20.520225902 -0400
++++ mcelog-1.0pre3_20120814_2/memdb.c	2013-03-18 13:29:56.501851681 -0400
+@@ -77,18 +77,19 @@ static unsigned dimmhash(unsigned socket
+ }
+ 
+ /* Search DIMM in hash table */
+-struct memdimm *get_memdimm(int socketid, int channel, int dimm)
++struct memdimm *get_memdimm(int socketid, int channel, int dimm, int insert)
+ {
+ 	struct memdimm *md;
+-	unsigned h = dimmhash(socketid, dimm, channel);
++	unsigned h;
+ 
++	h = dimmhash(socketid, dimm, channel);
+ 	for (md = md_dimms[h]; md; md = md->next) { 
+ 		if (md->socketid == socketid && 
+ 			md->channel == channel && 
+ 			md->dimm == dimm)
+ 			break;	
+ 	}
+-	if (md)
++	if (md || !insert)
+ 		return md;
+ 
+ 	md = xalloc(sizeof(struct memdimm));
+@@ -239,12 +240,12 @@ void memory_error(struct mce *m, int ch,
+ 	}
+ 
+ 	if (memdb_enabled && (ch != -1 || dimm != -1)) {
+-		md = get_memdimm(m->socketid, ch, dimm);
++		md = get_memdimm(m->socketid, ch, dimm, 1);
+ 		account_memdb(&dimms, md, m);
+ 	}
+ 
+ 	if (sockdb_enabled) {
+-		md = get_memdimm(m->socketid, -1, -1);
++		md = get_memdimm(m->socketid, -1, -1, 1);
+ 		account_over(&sockets, md, m, corr_err_cnt);
+ 		account_memdb(&sockets, md, m);
+ 	}
+@@ -373,6 +374,9 @@ parse_dimm_addr(char *bl, unsigned *sock
+ 	if (sscanf(bl + strcspn(bl, "_"), "_Node%u_Channel%u_Dimm%u", socketid, 
+ 		   channel, dimm) == 3)
+ 		return 1;
++	if (sscanf(bl, "NODE %u CHANNEL %u DIMM %u", socketid,
++		   channel, dimm) == 3)
++		return 1;
+ 	/* Add more DMI formats here */
+ 	return 0;		
+ }
+@@ -407,7 +411,7 @@ void prefill_memdb(void)
+ 			continue;
+ 		}
+ 
+-		md = get_memdimm(socketid, channel, dimm);
++		md = get_memdimm(socketid, channel, dimm, 1);
+ 		if (md->memdev) { 
+ 			/* dups -- likely parse error */
+ 			missed++;
+diff -urNp mcelog-1.0pre3_20120814_2.orig/memdb.h mcelog-1.0pre3_20120814_2/memdb.h
+--- mcelog-1.0pre3_20120814_2.orig/memdb.h	2013-03-18 13:05:20.500225733 -0400
++++ mcelog-1.0pre3_20120814_2/memdb.h	2013-03-18 13:29:56.502851675 -0400
+@@ -21,4 +21,4 @@ void memory_error(struct mce *m, int cha
+ struct memdimm;
+ void memdb_trigger(char *msg, struct memdimm *md,  time_t t,
+ 		   struct err_type *et, struct bucket_conf *bc);
+-struct memdimm *get_memdimm(int socketid, int channel, int dimm);
++struct memdimm *get_memdimm(int socketid, int channel, int dimm, int insert);
+diff -urNp mcelog-1.0pre3_20120814_2.orig/msr.c mcelog-1.0pre3_20120814_2/msr.c
+--- mcelog-1.0pre3_20120814_2.orig/msr.c	1969-12-31 19:00:00.000000000 -0500
++++ mcelog-1.0pre3_20120814_2/msr.c	2013-03-18 13:29:59.489878582 -0400
+@@ -0,0 +1,60 @@
++#include "mcelog.h"
++#include <stdio.h>
++#include <stdlib.h>
++#include <unistd.h>
++#include <fcntl.h>
++#include <errno.h>
++
++static void domsr(int cpu, int msr, int bit)
++{
++	char fpath[32];
++	unsigned long long data;
++	int fd;
++
++	sprintf(fpath, "/dev/cpu/%d/msr", cpu);
++	fd = open(fpath, O_RDWR);
++	if (fd == -1) {
++		switch (errno) {
++		case ENOENT:
++			SYSERRprintf("Warning: cpu %d offline?, imc_log not set\n", cpu);
++			return;
++		default:
++			SYSERRprintf("Cannot open %s to set imc_log\n", fpath);
++			exit(1);
++		}
++	}
++	if (pread(fd, &data, sizeof data, msr) != sizeof data) {
++		SYSERRprintf("Cannot read MSR_ERROR_CONTROL from %s\n", fpath);
++		exit(1);
++	}
++	data |= bit;
++	if (pwrite(fd, &data, sizeof data, msr) != sizeof data) {
++		SYSERRprintf("Cannot write MSR_ERROR_CONTROL to %s\n", fpath);
++		exit(1);
++	}
++	if (pread(fd, &data, sizeof data, msr) != sizeof data) {
++		SYSERRprintf("Cannot re-read MSR_ERROR_CONTROL from %s\n", fpath);
++		exit(1);
++	}
++	if ((data & bit) == 0) {
++		SYSERRprintf("Failed to set imc_log on cpu %d\n", cpu);
++		exit(1);
++	}
++	close(fd);
++}
++
++void set_imc_log(int cputype)
++{
++	int cpu, ncpus = sysconf(_SC_NPROCESSORS_CONF);
++	int	msr, bit;
++
++	switch (cputype) {
++	case CPU_SANDY_BRIDGE_EP:
++		msr = 0x17f;	/* MSR_ERROR_CONTROL */
++		bit = 0x2;	/* MemError Log Enable */
++		break;
++	}
++
++	for (cpu = 0; cpu < ncpus; cpu++)
++		domsr(cpu, msr, bit);
++}
+diff -urNp mcelog-1.0pre3_20120814_2.orig/p4.c mcelog-1.0pre3_20120814_2/p4.c
+--- mcelog-1.0pre3_20120814_2.orig/p4.c	2013-03-18 13:05:20.522225916 -0400
++++ mcelog-1.0pre3_20120814_2/p4.c	2013-03-18 13:29:59.490878590 -0400
+@@ -30,15 +30,11 @@
+ #include "tulsa.h"
+ #include "intel.h"
+ #include "yellow.h"
++#include "bitfield.h"
+ #include "sandy-bridge.h"
+ 
+ /* decode mce for P4/Xeon and Core2 family */
+ 
+-static inline int test_prefix(int nr, __u32 value)
+-{
+-	return ((value >> nr) == 1);
+-}
+-
+ static char* get_TT_str(__u8 t)
+ {
+ 	static char* TT[] = {"Instruction", "Data", "Generic", "Unknown"};
+@@ -149,6 +145,7 @@ static void decode_mca(__u32 mca, u64 tr
+ 		[2] = "Microcode ROM parity error",
+ 		[3] = "External error",
+ 		[4] = "FRC error",
++		[5] = "Internal parity error",
+ 	};
+ 
+ 	if (mca & (1UL << 12)) {
+@@ -356,7 +353,7 @@ void decode_intel_mc(struct mce *log, in
+ 		break;
+ 	case CPU_SANDY_BRIDGE:
+ 	case CPU_SANDY_BRIDGE_EP:
+-		snb_decode_model(cputype, log->bank, log->status, size);
++		snb_decode_model(cputype, log->bank, log->status, log->misc);
+ 		break;
+ 	}
+ }
+diff -urNp mcelog-1.0pre3_20120814_2.orig/page.c mcelog-1.0pre3_20120814_2/page.c
+--- mcelog-1.0pre3_20120814_2.orig/page.c	2013-03-18 13:05:20.520225902 -0400
++++ mcelog-1.0pre3_20120814_2/page.c	2013-03-18 13:29:56.502851675 -0400
+@@ -171,12 +171,30 @@ void account_page_error(struct mce *m, i
+ 	u64 addr = m->addr;
+ 	struct mempage *mp;
+ 	time_t t;
++	unsigned cpu = m->extcpu ? m->extcpu : m->cpu;
+ 
+ 	if (offline == OFFLINE_OFF)
+ 		return;
+ 	if (!(m->status & MCI_STATUS_ADDRV)  || (m->status & MCI_STATUS_UC))
+ 		return;
+ 
++	switch (cputype) {
++	case CPU_SANDY_BRIDGE_EP:
++		/*
++		 * On SNB-EP platform we see corrected errors reported with
++		 * address in Bank 5 from hardware (depending on BIOS setting),
++                 * in the meanwhile, a duplicate record constructed from
++                 * information found by "firmware first" APEI code. Ignore the
++                 * duplicate information so that we don't double count errors.
++		 *
++		 * NOTE: the record from APEI fake this error from CPU 0 BANK 1.
++		 */
++		if (m->bank == 1 && cpu == 0)
++			return;
++	default:
++		break;
++	}
++
+ 	t = m->time;
+ 	addr &= ~((u64)PAGE_SIZE - 1);
+ 	mp = mempage_lookup(addr);
+@@ -195,7 +213,7 @@ void account_page_error(struct mce *m, i
+ 			return;
+ 		/* Only do triggers and messages for online pages */
+ 		thresh = bucket_output(&page_trigger_conf, &mp->ce.bucket);
+-		md = get_memdimm(m->socketid, channel, dimm);
++		md = get_memdimm(m->socketid, channel, dimm, 1);
+ 		asprintf(&msg, "Corrected memory errors on page %llx exceed threshold %s",
+ 			addr, thresh);
+ 		free(thresh);
+diff -urNp mcelog-1.0pre3_20120814_2.orig/sandy-bridge.c mcelog-1.0pre3_20120814_2/sandy-bridge.c
+--- mcelog-1.0pre3_20120814_2.orig/sandy-bridge.c	2013-03-18 13:05:20.520225902 -0400
++++ mcelog-1.0pre3_20120814_2/sandy-bridge.c	2013-03-18 13:30:49.209331520 -0400
+@@ -21,8 +21,9 @@
+ #include "mcelog.h"
+ #include "bitfield.h"
+ #include "sandy-bridge.h"
++#include "memdb.h"
+ 
+-/* See IA32 SDM Vol3B Appendix E.4 ff */
++/* See IA32 SDM Vol3B Table 16.4.1 */
+ 
+ static char *pcu_1[] = {
+ 	[0] = "No error",
+@@ -39,17 +40,21 @@ static char *pcu_1[] = {
+ 
+ static char *pcu_2[] = { 
+ 	[0x00] = "No Error",
+-	[0x20] = "MC_RCLK_PLL_LOCK_TIMEOUT",
+-	[0x21] = "MC_PCIE_PLL_LOCK_TIMEOT",
+-	[0x22] = "MC_BOOT_VID_SET_TIMEOUT",
+-	[0x23] = "MC_BOOT_FREQUENCY_SET_TIMEOUT",
+-	[0x24] = "MC_START_IA_CORES_TIMEOUT",
+-	[0x26] = "MC_PCIE_RCOMP_TIMEOUT",
+-	[0x27] = "MC_PMA_DNS_COMMAND_TIMEOUT",
+-	[0x28] = "MC_MESSAGE_CHANNEL_TIMEOUT",
+-	[0x29] = "MC_GVFSM_BGF_PROGRAM_TIMEOUT",
+-	[0x2A] = "MC_MC_PLL_LOCK_TIMEOUT",
+-	[0x2B] = "MC_MS_BGF_PROGRAM_TIMEOUT",
++	[0x0D] = "MC_IMC_FORCE_SR_S3_TIMEOUT",
++	[0x0E] = "MC_MC_CPD_UNCPD_ST_TIMEOUT",
++	[0x0F] = "MC_PKGS_SAFE_WP_TIMEOUT",
++	[0x43] = "MC_PECI_MAILBOX_QUIESCE_TIMEOUT",
++	[0x5C] = "MC_MORE_THAN_ONE_LT_AGENT",
++	[0x60] = "MC_INVALID_PKGS_REQ_PCH",
++	[0x61] = "MC_INVALID_PKGS_REQ_QPI",
++	[0x62] = "MC_INVALID_PKGS_RES_QPI",
++	[0x63] = "MC_INVALID_PKGC_RES_PCH",
++	[0x64] = "MC_INVALID_PKG_STATE_CONFIG",
++	[0x70] = "MC_WATCHDG_TIMEOUT_PKGC_SLAVE",
++	[0x71] = "MC_WATCHDG_TIMEOUT_PKGC_MASTER",
++	[0x72] = "MC_WATCHDG_TIMEOUT_PKGS_MASTER",
++	[0x7A] = "MC_HA_FAILSTS_CHANGE_DETECTED",
++	[0x81] = "MC_RECOVERABLE_DIE_THERMAL_TOO_HOT",
+ };
+ 
+ static struct field pcu_mc4[] = { 
+@@ -58,6 +63,21 @@ static struct field pcu_mc4[] = { 
+ 	{}
+ };
+ 
++static char *memctrl_1[] = {
++	[0x001] = "Address parity error",
++	[0x002] = "HA Wrt buffer Data parity error",
++	[0x004] = "HA Wrt byte enable parity error",
++	[0x008] = "Corrected patrol scrub error",
++	[0x010] = "Uncorrected patrol scrub error",
++	[0x020] = "Corrected spare error",
++	[0x040] = "Uncorrected spare error",
++};
++
++static struct field memctrl_mc8[] = {
++	FIELD(16, memctrl_1),
++	{}
++};
++
+ void snb_decode_model(int cputype, int bank, u64 status, u64 misc)
+ {
+ 	switch (bank) { 
+@@ -73,5 +93,71 @@ void snb_decode_model(int cputype, int b
+ 			Wprintf("QPI\n");
+ 		}
+ 		break;
++	case 8:
++	case 9:
++	case 10:
++	case 11:
++		Wprintf("MemCtrl: ");
++		decode_bitfield(status, memctrl_mc8);
++		Wprintf("\n");
++		break;
++	}
++}
++
++/*
++ * Sandy Bridge EP and EP4S processors (family 6, model 45) support additional
++ * logging for corrected errors in the integrated memory controller (IMC)
++ * banks. The mode is off by default, but can be enabled by setting the
++ * "MemError Log Enable" * bit in MSR_ERROR_CONTROL (MSR 0x17f).
++ * The documentation in the August 2012 edition of Intel's Software developer
++ * manual has some minor errors because the worng version of table 16-16
++ * "Intel IMC MC Error Codes for IA32_MCi_MISC (i= 8, 11)" was included.
++ * Corrections are:
++ *  Bit 62 is the "VALID" bit for the "first-device" bits in MISC and STATUS
++ *  Bit 63 is the "VALID" bit for the "second-device" bits in MISC
++ *  Bits 58:56 and 61:59 should be marked as "reserved".
++ * There should also be a footnote explaining how the "failing rank" fields
++ * can be converted to a DIMM number within a channel for systems with either
++ * two or three DIMMs per channel.
++ */
++static int failrank2dimm(unsigned failrank, int socket, int channel)
++{
++	switch (failrank) {
++	case 0: case 1: case 2: case 3:
++		return 0;
++	case 4: case 5:
++		return 1;
++	case 6: case 7:
++		if (get_memdimm(socket, channel, 2, 0))
++			return 2;
++		else
++			return 1;
++	}
++	return -1;
++}
++
++void sandy_bridge_ep_memerr_misc(struct mce *m, int *channel, int *dimm)
++{
++	u64 status = m->status;
++	unsigned	failrank, chan;
++
++	/* Ignore unless this is an corrected extended error from an iMC bank */
++	if (!imc_log || m->bank < 8 || m->bank > 11 || (status & MCI_STATUS_UC) ||
++		!test_prefix(7, status & 0xefff))
++		return;
++
++	chan = EXTRACT(status, 0, 3);
++	if (chan == 0xf)
++		return;
++
++	if (EXTRACT(m->misc, 62, 62)) {
++		failrank = EXTRACT(m->misc, 46, 50);
++		dimm[0] = failrank2dimm(failrank, m->socketid, chan);
++		channel[0] = chan;
++	}
++	if (EXTRACT(m->misc, 63, 63)) {
++		failrank = EXTRACT(m->misc, 51, 55);
++		dimm[1] = failrank2dimm(failrank, m->socketid, chan);
++		channel[1] = chan;
+ 	}
+ }
+diff -urNp mcelog-1.0pre3_20120814_2.orig/sandy-bridge.h mcelog-1.0pre3_20120814_2/sandy-bridge.h
+--- mcelog-1.0pre3_20120814_2.orig/sandy-bridge.h	2013-03-18 13:05:20.520225902 -0400
++++ mcelog-1.0pre3_20120814_2/sandy-bridge.h	2013-03-18 13:29:59.490878590 -0400
+@@ -1 +1,2 @@
+ void snb_decode_model(int cputype, int bank, u64 status, u64 misc);
++void sandy_bridge_ep_memerr_misc(struct mce *m, int *channel, int *dimm);

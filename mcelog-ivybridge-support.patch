@@ -1,0 +1,325 @@
+Add IvyBridge support
+
+Includes commits from upstream, https://github.com/andikleen/mcelog.git
+
+c824617 Fix typo in IvyBridge tables
+4622d90 Add Ivy Bridge support to mcelog
+
+
+diff -urNp mcelog-1.0pre3_20120814_2.orig2/intel.c mcelog-1.0pre3_20120814_2/intel.c
+--- mcelog-1.0pre3_20120814_2.orig2/intel.c	2013-03-18 14:50:36.484824279 -0400
++++ mcelog-1.0pre3_20120814_2/intel.c	2013-03-18 14:52:45.144030096 -0400
+@@ -23,6 +23,7 @@
+ #include "memdb.h"
+ #include "page.h"
+ #include "sandy-bridge.h"
++#include "ivy-bridge.h"
+ #include "xeon75xx.h"
+ 
+ int memory_error_support;
+@@ -30,7 +31,8 @@ int memory_error_support;
+ void intel_cpu_init(enum cputype cpu)
+ {
+ 	if (cpu == CPU_NEHALEM || cpu == CPU_XEON75XX || cpu == CPU_INTEL ||
+-	    cpu == CPU_SANDY_BRIDGE || cpu == CPU_SANDY_BRIDGE_EP)
++	    cpu == CPU_SANDY_BRIDGE || cpu == CPU_SANDY_BRIDGE_EP ||
++	    cpu == CPU_IVY_BRIDGE || cpu == CPU_IVY_BRIDGE_EPEX)
+ 		memory_error_support = 1;
+ }
+ 
+@@ -60,6 +62,10 @@ enum cputype select_intel_cputype(int fa
+ 			return CPU_SANDY_BRIDGE;
+ 		else if (model == 0x2d)
+ 			return CPU_SANDY_BRIDGE_EP;
++		else if (model == 0x3a)
++			return CPU_IVY_BRIDGE;
++		else if (model == 0x3e)
++			return CPU_IVY_BRIDGE_EPEX;
+ 		if (model > 0x1a) {
+ #if 0
+ 			Eprintf("Family 6 Model %x CPU: only decoding architectural errors\n",
+@@ -106,6 +112,9 @@ static int intel_memory_error(struct mce
+ 		case CPU_SANDY_BRIDGE_EP:
+ 			sandy_bridge_ep_memerr_misc(m, channel, dimm);
+ 			break;
++		case CPU_IVY_BRIDGE_EPEX:
++			ivy_bridge_ep_memerr_misc(m, channel, dimm);
++			break;
+ 		default:
+ 			break;
+ 		} 
+diff -urNp mcelog-1.0pre3_20120814_2.orig2/intel.h mcelog-1.0pre3_20120814_2/intel.h
+--- mcelog-1.0pre3_20120814_2.orig2/intel.h	2013-03-18 14:50:36.487824293 -0400
++++ mcelog-1.0pre3_20120814_2/intel.h	2013-03-18 14:52:45.144030096 -0400
+@@ -15,5 +15,7 @@ extern int memory_error_support;
+ 	case CPU_INTEL: \
+ 	case CPU_XEON75XX: \
+ 	case CPU_SANDY_BRIDGE_EP: \
+-	case CPU_SANDY_BRIDGE
++	case CPU_SANDY_BRIDGE: \
++	case CPU_IVY_BRIDGE: \
++	case CPU_IVY_BRIDGE_EPEX
+ 
+diff -urNp mcelog-1.0pre3_20120814_2.orig2/ivy-bridge.c mcelog-1.0pre3_20120814_2/ivy-bridge.c
+--- mcelog-1.0pre3_20120814_2.orig2/ivy-bridge.c	1969-12-31 19:00:00.000000000 -0500
++++ mcelog-1.0pre3_20120814_2/ivy-bridge.c	2013-03-18 14:52:50.993085650 -0400
+@@ -0,0 +1,158 @@
++/* Copyright (C) 2013 Intel Corporation
++   Decode Intel Ivy Bridge specific machine check errors.
++
++   mcelog is free software; you can redistribute it and/or
++   modify it under the terms of the GNU General Public
++   License as published by the Free Software Foundation; version
++   2.
++
++   mcelog is distributed in the hope that it will be useful,
++   but WITHOUT ANY WARRANTY; without even the implied warranty of
++   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++   General Public License for more details.
++
++   You should find a copy of v2 of the GNU General Public License somewhere
++   on your Linux system; if not, write to the Free Software Foundation, 
++   Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA 
++
++   Author: Tony Luck
++*/
++
++#include "mcelog.h"
++#include "bitfield.h"
++#include "ivy-bridge.h"
++#include "memdb.h"
++
++/* See IA32 SDM Vol3B Table 16-17 */
++
++static char *pcu_1[] = {
++	[0] = "No error",
++	[1] = "Non_IMem_Sel",
++	[2] = "I_Parity_Error",
++	[3] = "Bad_OpCode",
++	[4] = "I_Stack_Underflow",
++	[5] = "I_Stack_Overflow",
++	[6] = "D_Stack_Underflow",
++	[7] = "D_Stack_Overflow",
++	[8] = "Non-DMem_Sel",
++	[9] = "D_Parity_Error"
++};
++
++static char *pcu_2[] = { 
++	[0x00] = "No Error",
++	[0x0D] = "MC_IMC_FORCE_SR_S3_TIMEOUT",
++	[0x0E] = "MC_MC_CPD_UNCPD_ST_TIMEOUT",
++	[0x0F] = "MC_PKGS_SAFE_WP_TIMEOUT",
++	[0x43] = "MC_PECI_MAILBOX_QUIESCE_TIMEOUT",
++	[0x44] = "MC_CRITICAL_VR_FAILED",
++	[0x45] = "MC_ICC_MAX-NOTSUPPORTED",
++	[0x5C] = "MC_MORE_THAN_ONE_LT_AGENT",
++	[0x60] = "MC_INVALID_PKGS_REQ_PCH",
++	[0x61] = "MC_INVALID_PKGS_REQ_QPI",
++	[0x62] = "MC_INVALID_PKGS_RES_QPI",
++	[0x63] = "MC_INVALID_PKGC_RES_PCH",
++	[0x64] = "MC_INVALID_PKG_STATE_CONFIG",
++	[0x70] = "MC_WATCHDG_TIMEOUT_PKGC_SLAVE",
++	[0x71] = "MC_WATCHDG_TIMEOUT_PKGC_MASTER",
++	[0x72] = "MC_WATCHDG_TIMEOUT_PKGS_MASTER",
++	[0x7A] = "MC_HA_FAILSTS_CHANGE_DETECTED",
++	[0x7B] = "MC_PCIE_R2PCIE-RW_BLOCK_ACK_TIMEOUT",
++	[0x81] = "MC_RECOVERABLE_DIE_THERMAL_TOO_HOT",
++};
++
++static struct field pcu_mc4[] = { 
++	FIELD(16, pcu_1),
++	FIELD(24, pcu_2),
++	{}
++};
++
++/* See IA32 SDM Vol3B Table 16-18 */
++
++static char *memctrl_1[] = {
++	[0x001] = "Address parity error",
++	[0x002] = "HA Wrt buffer Data parity error",
++	[0x004] = "HA Wrt byte enable parity error",
++	[0x008] = "Corrected patrol scrub error",
++	[0x010] = "Uncorrected patrol scrub error",
++	[0x020] = "Corrected spare error",
++	[0x040] = "Uncorrected spare error",
++	[0x100] = "iMC, WDB, parity errors",
++};
++
++static struct field memctrl_mc9[] = {
++	FIELD(16, memctrl_1),
++	{}
++};
++
++void ivb_decode_model(int cputype, int bank, u64 status, u64 misc)
++{
++	switch (bank) { 
++	case 4:
++		Wprintf("PCU: ");
++		decode_bitfield(status, pcu_mc4);
++		Wprintf("\n");
++		break;
++	case 5:
++		if (cputype == CPU_IVY_BRIDGE_EPEX) {
++			/* MCACOD already decoded */
++			Wprintf("QPI\n");
++		}
++		break;
++	case 9: case 10: case 11: case 12:
++	case 13: case 14: case 15: case 16:
++		Wprintf("MemCtrl: ");
++		decode_bitfield(status, memctrl_mc9);
++		Wprintf("\n");
++		break;
++	}
++}
++
++/*
++ * Ivy Bridge EP and EX processors (family 6, model 62) support additional
++ * logging for corrected errors in the integrated memory controller (IMC)
++ * banks. The mode is off by default, but can be enabled by setting the
++ * "MemError Log Enable" * bit in MSR_ERROR_CONTROL (MSR 0x17f).
++ * The SDM leaves it as an exercise for the reader to convert the
++ * faling rank to a DIMM slot.
++ */
++static int failrank2dimm(unsigned failrank, int socket, int channel)
++{
++	switch (failrank) {
++	case 0: case 1: case 2: case 3:
++		return 0;
++	case 4: case 5:
++		return 1;
++	case 6: case 7:
++		if (get_memdimm(socket, channel, 2, 0))
++			return 2;
++		else
++			return 1;
++	}
++	return -1;
++}
++
++void ivy_bridge_ep_memerr_misc(struct mce *m, int *channel, int *dimm)
++{
++	u64 status = m->status;
++	unsigned	failrank, chan;
++
++	/* Ignore unless this is an corrected extended error from an iMC bank */
++	if (!imc_log || m->bank < 9 || m->bank > 16 || (status & MCI_STATUS_UC) ||
++		!test_prefix(7, status & 0xefff))
++		return;
++
++	chan = EXTRACT(status, 0, 3);
++	if (chan == 0xf)
++		return;
++
++	if (EXTRACT(m->misc, 62, 62)) {
++		failrank = EXTRACT(m->misc, 46, 50);
++		dimm[0] = failrank2dimm(failrank, m->socketid, chan);
++		channel[0] = chan;
++	}
++	if (EXTRACT(m->misc, 63, 63)) {
++		failrank = EXTRACT(m->misc, 51, 55);
++		dimm[1] = failrank2dimm(failrank, m->socketid, chan);
++		channel[1] = chan;
++	}
++}
+diff -urNp mcelog-1.0pre3_20120814_2.orig2/ivy-bridge.h mcelog-1.0pre3_20120814_2/ivy-bridge.h
+--- mcelog-1.0pre3_20120814_2.orig2/ivy-bridge.h	1969-12-31 19:00:00.000000000 -0500
++++ mcelog-1.0pre3_20120814_2/ivy-bridge.h	2013-03-18 14:52:45.145030105 -0400
+@@ -0,0 +1,2 @@
++void ivb_decode_model(int cputype, int bank, u64 status, u64 misc);
++void ivy_bridge_ep_memerr_misc(struct mce *m, int *channel, int *dimm);
+diff -urNp mcelog-1.0pre3_20120814_2.orig2/Makefile mcelog-1.0pre3_20120814_2/Makefile
+--- mcelog-1.0pre3_20120814_2.orig2/Makefile	2013-03-18 14:50:36.479824203 -0400
++++ mcelog-1.0pre3_20120814_2/Makefile	2013-03-18 14:52:45.144030096 -0400
+@@ -32,7 +32,7 @@ OBJ := p4.o k8.o mcelog.o dmi.o tsc.o co
+        nehalem.o dunnington.o tulsa.o config.o memutil.o msg.o   \
+        eventloop.o leaky-bucket.o memdb.o server.o trigger.o 	 \
+        client.o cache.o sysfs.o yellow.o page.o rbtree.o 	 \
+-       xeon75xx.o sandy-bridge.o msr.o
++       xeon75xx.o sandy-bridge.o ivy-bridge.o msr.o
+ DISKDB_OBJ := diskdb.o dimm.o db.o
+ CLEAN := mcelog dmi tsc dbquery .depend .depend.X dbquery.o ${DISKDB_OBJ}
+ DOC := mce.pdf
+diff -urNp mcelog-1.0pre3_20120814_2.orig2/mcelog.c mcelog-1.0pre3_20120814_2/mcelog.c
+--- mcelog-1.0pre3_20120814_2.orig2/mcelog.c	2013-03-18 14:50:36.481824240 -0400
++++ mcelog-1.0pre3_20120814_2/mcelog.c	2013-03-18 14:52:45.145030105 -0400
+@@ -225,6 +225,8 @@ static char *cputype_name[] = {
+ 	[CPU_XEON75XX] = "Intel Xeon 7500 series",
+ 	[CPU_SANDY_BRIDGE] = "Sandy Bridge", /* Fill in better name */
+ 	[CPU_SANDY_BRIDGE_EP] = "Sandy Bridge EP", /* Fill in better name */
++	[CPU_IVY_BRIDGE] = "Ivy Bridge", /* Fill in better name */
++	[CPU_IVY_BRIDGE_EPEX] = "Ivy Bridge EP/EX", /* Fill in better name */
+ };
+ 
+ static struct config_choice cpu_choices[] = {
+@@ -257,6 +259,9 @@ static struct config_choice cpu_choices[
+ 	{ "xeon7100", CPU_P4 },
+ 	{ "sandybridge", CPU_SANDY_BRIDGE }, /* Fill in better name */
+ 	{ "sandybridge-ep", CPU_SANDY_BRIDGE_EP }, /* Fill in better name */
++	{ "ivybridge", CPU_IVY_BRIDGE }, /* Fill in better name */
++	{ "ivybridge-ep", CPU_IVY_BRIDGE_EPEX }, /* Fill in better name */
++	{ "ivybridge-ex", CPU_IVY_BRIDGE_EPEX }, /* Fill in better name */
+ 	{}
+ };
+ 
+@@ -417,7 +422,7 @@ static void dump_mce(struct mce *m, unsi
+ 			fam,
+ 			mod);
+ 	}
+-	if (cputype != CPU_SANDY_BRIDGE_EP)
++	if (cputype != CPU_SANDY_BRIDGE_EP && cputype != CPU_IVY_BRIDGE_EPEX)
+ 		resolveaddr(m->addr);
+ 	if (!ascii_mode && ismemerr && (m->status & MCI_STATUS_ADDRV)) {
+ 		diskdb_resolve_addr(m->addr);
+@@ -1325,6 +1330,7 @@ int main(int ac, char **av) 
+ 	if (imc_log == -1) {
+ 		switch (cputype) {
+ 		case CPU_SANDY_BRIDGE_EP:
++		case CPU_IVY_BRIDGE_EPEX:
+ 			imc_log = 1;
+ 			break;
+ 		default:
+diff -urNp mcelog-1.0pre3_20120814_2.orig2/mcelog.h mcelog-1.0pre3_20120814_2/mcelog.h
+--- mcelog-1.0pre3_20120814_2.orig2/mcelog.h	2013-03-18 14:50:36.483824272 -0400
++++ mcelog-1.0pre3_20120814_2/mcelog.h	2013-03-18 14:52:45.145030105 -0400
+@@ -115,6 +115,8 @@ enum cputype {
+ 	CPU_XEON75XX, 
+ 	CPU_SANDY_BRIDGE, 
+ 	CPU_SANDY_BRIDGE_EP, 
++	CPU_IVY_BRIDGE, 
++	CPU_IVY_BRIDGE_EPEX, 
+ };
+ 
+ enum option_ranges {
+diff -urNp mcelog-1.0pre3_20120814_2.orig2/msr.c mcelog-1.0pre3_20120814_2/msr.c
+--- mcelog-1.0pre3_20120814_2.orig2/msr.c	2013-03-18 14:50:36.485824283 -0400
++++ mcelog-1.0pre3_20120814_2/msr.c	2013-03-18 14:52:45.145030105 -0400
+@@ -50,6 +50,7 @@ void set_imc_log(int cputype)
+ 
+ 	switch (cputype) {
+ 	case CPU_SANDY_BRIDGE_EP:
++	case CPU_IVY_BRIDGE_EPEX:
+ 		msr = 0x17f;	/* MSR_ERROR_CONTROL */
+ 		bit = 0x2;	/* MemError Log Enable */
+ 		break;
+diff -urNp mcelog-1.0pre3_20120814_2.orig2/p4.c mcelog-1.0pre3_20120814_2/p4.c
+--- mcelog-1.0pre3_20120814_2.orig2/p4.c	2013-03-18 14:50:36.487824293 -0400
++++ mcelog-1.0pre3_20120814_2/p4.c	2013-03-18 14:52:45.146030115 -0400
+@@ -32,6 +32,7 @@
+ #include "yellow.h"
+ #include "bitfield.h"
+ #include "sandy-bridge.h"
++#include "ivy-bridge.h"
+ 
+ /* decode mce for P4/Xeon and Core2 family */
+ 
+@@ -355,6 +356,9 @@ void decode_intel_mc(struct mce *log, in
+ 	case CPU_SANDY_BRIDGE_EP:
+ 		snb_decode_model(cputype, log->bank, log->status, log->misc);
+ 		break;
++	case CPU_IVY_BRIDGE_EPEX:
++		ivb_decode_model(cputype, log->bank, log->status, log->misc);
++		break;
+ 	}
+ }
+ 
