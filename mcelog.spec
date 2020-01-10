@@ -4,7 +4,7 @@
 Summary:	Tool to translate x86-64 CPU Machine Check Exception data
 Name:		mcelog
 Version:	144
-Release:	10.%{last_git_commit}%{?dist}
+Release:	3.%{last_git_commit}%{?dist}
 Epoch:		3
 Group:		System Environment/Base
 License:	GPLv2
@@ -26,14 +26,6 @@ Patch7:		mcelog-update-e4aca63.patch
 Patch8:		mcelog-update-94d853b2ea81.patch
 Patch9:		mcelog-patch-e9aeed03f3d1.patch
 Patch10:	mcelog-patch-cfa11588ad8b.patch
-# Patches 11-15 below can be removed on the next full code update.
-Patch11:	mcelog-patch-commit-916015663906.patch
-Patch12:	mcelog-patch-0755b55af.patch
-Patch13:	mcelog-patch-59b8cab3f.patch
-Patch14:	mcelog-patch-f8f1490cb.patch
-Patch15:	mcelog-patch-595a2dcfe.patch
-Patch16:	mcelog-patch-6ed93e30f835.patch
-Patch17:	mcelog-patch-d1f37aae14d4.patch
 URL:		https://github.com/andikleen/mcelog.git
 Buildroot:	%{_tmppath}/%{name}-%{version}-root
 ExclusiveArch:	i686 x86_64
@@ -48,32 +40,22 @@ on x86-32 and x86-64 systems. It can be run either as a daemon, or by cron.
 
 %prep
 %setup -q -n %{name}-%{last_tar_git_commit}
-%patch0 -p1
-%patch1 -p1
-%patch2 -p1
-%patch3 -p1
-%patch4 -p1
-%patch5 -p1
-%patch6 -p1
-%patch7 -p1
-%patch8 -p1
-%patch9 -p1
-%patch10 -p1
-%patch11 -p1
-%patch12 -p1
-%patch13 -p1
-%patch14 -p1
-%patch15 -p1
-%patch16 -p1
-%patch17 -p1
+%patch0 -p1 -b .fix-triggers-and-cacheing
+%patch1 -p1 -b .mcelog-update-2577aeb
+%patch2 -p1 -b .mcelog-update-f30da3d
+%patch3 -p1 -b .mcelog-haswell-support
+%patch4 -p1 -b .mcelog-update-9de4924
+%patch5 -p1 -b .mcelog-update-e7e0ac1
+%patch6 -p1 -b .mcelog-patch-1bd2984
+%patch7 -p1 -b .mcelog-update-e4aca63
+%patch8 -p1 -b .mcelog-update-94d853b2ea81
+%patch9 -p1 -b .mcelog-patch-e9aeed03f3d1
+%patch10 -p1 -b .mcelog-patch-e9aeed03f3d1
 
 %build
 mkdir -p $RPM_BUILD_ROOT/%{_sysconfdir}
 mkdir -p $RPM_BUILD_ROOT/%{_sbindir}
 mkdir -p $RPM_BUILD_ROOT/%{_mandir}
-
-# Make sure mcelog --version and 'rpm -q mcelog' are consistent
-echo "%{name}-%{version}-%{release}" > .os_version
 
 make CFLAGS="$RPM_OPT_FLAGS  -Wl,-z,relro,-z,now -fpie" LDFLAGS="-Wl,-z,relro,-z,now -fpie -pie"
 
@@ -102,14 +84,8 @@ install -p -m644 mcelog.triggers.5 $RPM_BUILD_ROOT/%{_mandir}/man5
 rm -rf $RPM_BUILD_ROOT
 
 %post
-case "$1" in
-	1) # This is an initial installation
-		systemctl enable mcelog.service &> /dev/null || systemctl daemon-reload &> /dev/null
-	;;
-	2) # This is an upgrade - don't reactivate the service again
-		:
-	;;
-esac
+systemctl enable mcelog.service &> /dev/null ||
+systemctl daemon-reload &> /dev/null
 
 %preun
 # Handle removing mcelog
@@ -137,21 +113,6 @@ fi
 %attr(0644,root,root) %{_mandir}/*/*
 
 %changelog
-* Mon Feb 25 2019 Prarit Bhargava <prarit@redhat.com> - 3:144.10.94d853b2ea81
-- mcelog: Deduce channel number for Haswell/Broadwell/Skylake systems [1641043]
-- mcelog: Add decoding for Optane DC persistent memory mode [1645345]
-* Fri Jun 29 2018 Prarit Bhargava <prarit@redhat.com> - 3:144.9.94d853b2ea81
-- Print microcode version when the kernel provides it [1593109]
-* Tue Oct 17 2017 Prarit Bhargava <prarit@redhat.com> - 3:144.8.94d853b2ea81
-- Fix typo in spec file for .os_version[1454419]
-* Tue Oct 17 2017 Prarit Bhargava <prarit@redhat.com> - 3:144.7.94d853b2ea81
-- Fix mcelog --version [1454419]
-* Mon Oct 16 2017 Prarit Bhargava <prarit@redhat.com> - 3:144.6.94d853b2ea81
-- Fix return value from 'mcelog --help' [1481421]
-* Thu Oct  5 2017 Prarit Bhargava <prarit@redhat.com> - 3:144.5.94d853b2ea81
-- Fix mcelog.service file enable/disable after install & upgrade [1413284]
-* Tue Sep 19 2017 Prarit Bhargava <prarit@redhat.com> - 3:144.4.94d853b2ea81
-- Cleanup spec and patch files [1493151]
 * Thu Apr 27 2017 Prarit Bhargava <prarit@redhat.com> - 3:144.3.94d853b2ea81
 - Fix "warning: 16 bytes ignored in each record" warning [1445809]
 * Thu Feb  2 2017 Prarit Bhargava <prarit@redhat.com> - 3:144.2.94d853b2ea81
