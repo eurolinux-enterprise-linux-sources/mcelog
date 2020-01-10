@@ -4,7 +4,7 @@
 Summary:	Tool to translate x86-64 CPU Machine Check Exception data
 Name:		mcelog
 Version:	144
-Release:	8.%{last_git_commit}%{?dist}
+Release:	9.%{last_git_commit}%{?dist}
 Epoch:		3
 Group:		System Environment/Base
 License:	GPLv2
@@ -26,11 +26,12 @@ Patch7:		mcelog-update-e4aca63.patch
 Patch8:		mcelog-update-94d853b2ea81.patch
 Patch9:		mcelog-patch-e9aeed03f3d1.patch
 Patch10:	mcelog-patch-cfa11588ad8b.patch
-# Patches 11-14 below can be removed on the next full code update.
+# Patches 11-15 below can be removed on the next full code update.
 Patch11:	mcelog-patch-commit-916015663906.patch
 Patch12:	mcelog-patch-0755b55af.patch
 Patch13:	mcelog-patch-59b8cab3f.patch
 Patch14:	mcelog-patch-f8f1490cb.patch
+Patch15:	mcelog-patch-595a2dcfe.patch
 URL:		https://github.com/andikleen/mcelog.git
 Buildroot:	%{_tmppath}/%{name}-%{version}-root
 ExclusiveArch:	i686 x86_64
@@ -60,6 +61,7 @@ on x86-32 and x86-64 systems. It can be run either as a daemon, or by cron.
 %patch12 -p1
 %patch13 -p1
 %patch14 -p1
+%patch15 -p1
 
 %build
 mkdir -p $RPM_BUILD_ROOT/%{_sysconfdir}
@@ -131,6 +133,8 @@ fi
 %attr(0644,root,root) %{_mandir}/*/*
 
 %changelog
+* Fri Jun 29 2018 Prarit Bhargava <prarit@redhat.com> - 3:144.9.94d853b2ea81
+- Print microcode version when the kernel provides it [1593109]
 * Tue Oct 17 2017 Prarit Bhargava <prarit@redhat.com> - 3:144.8.94d853b2ea81
 - Fix typo in spec file for .os_version[1454419]
 * Tue Oct 17 2017 Prarit Bhargava <prarit@redhat.com> - 3:144.7.94d853b2ea81
